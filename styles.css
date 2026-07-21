@@ -1,0 +1,451 @@
+/*
+  styles.css
+  Design language: a working shopkeeper's ledger. Deep ink-teal for
+  structure, a brass/gold stamp accent for emphasis and money figures,
+  paper-toned surfaces. Numbers are set in monospace (tabular, receipt-
+  style); headings in a serif that reads like a ledger heading; body
+  text in the system sans stack. Mobile-first, bottom tab navigation
+  (matches how a real Android app is held and used one-handed).
+*/
+
+:root {
+  --ink: #1C3D3A;
+  --ink-2: #2A5350;
+  --paper: #EEF1EC;
+  --surface: #FFFFFF;
+  --gold: #C08A28;
+  --gold-soft: #EFDDB2;
+  --success: #2F7A5C;
+  --danger: #B4453A;
+  --text: #22302E;
+  --text-muted: #63706D;
+  --border: #D9DED4;
+
+  --font-display: Georgia, "Times New Roman", ui-serif, serif;
+  --font-body: -apple-system, "Segoe UI", system-ui, Roboto, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+  --tabbar-h: 62px;
+  --topbar-h: 56px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--ink);
+  color: var(--text);
+  font-family: var(--font-body);
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app-shell {
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+  background: var(--paper);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------------- Top bar ---------------- */
+.top-bar {
+  height: var(--topbar-h);
+  flex: 0 0 auto;
+  background: var(--ink);
+  color: var(--gold-soft);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+.top-bar .brand {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 0.3px;
+  color: #F2E8CF;
+}
+.top-bar .brand .tag { color: var(--gold); }
+.top-bar .date {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #BFD1CD;
+}
+
+/* ---------------- Content area ---------------- */
+.tab-panel {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 14px 14px calc(var(--tabbar-h) + 24px) 14px;
+  display: none;
+}
+.tab-panel.active { display: block; }
+
+.section-title {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 18px 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.section-title .rule {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* ---------------- Bottom tab bar ---------------- */
+.tab-bar {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 480px;
+  height: var(--tabbar-h);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  display: flex;
+  z-index: 30;
+}
+.tab-btn {
+  flex: 1;
+  border: none;
+  background: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-family: var(--font-body);
+  font-size: 10px;
+  color: var(--text-muted);
+  cursor: pointer;
+  position: relative;
+}
+.tab-btn svg { width: 20px; height: 20px; }
+.tab-btn.active { color: var(--ink); }
+.tab-btn.active::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 26px;
+  height: 3px;
+  background: var(--gold);
+  border-radius: 0 0 3px 3px;
+}
+
+/* ---------------- Cards / KPI receipt strips ---------------- */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.kpi-card {
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  position: relative;
+}
+.kpi-card::before, .kpi-card::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  width: 8px;
+  height: 8px;
+  background: var(--paper);
+  border-radius: 50%;
+  border: 1px dashed var(--border);
+}
+.kpi-card::before { left: 14px; }
+.kpi-card::after { right: 14px; }
+.kpi-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.kpi-value {
+  font-family: var(--font-mono);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  margin-bottom: 10px;
+}
+.chart-card canvas {
+  width: 100%;
+  height: 200px;
+  display: block;
+}
+
+/* ---------------- Chips (filters) ---------------- */
+.chip-row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  margin-bottom: 8px;
+}
+.chip {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.chip.active {
+  background: var(--ink);
+  color: var(--gold-soft);
+  border-color: var(--ink);
+}
+
+/* ---------------- List rows (products / transactions / expenses) ---------------- */
+.list-row {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.list-row .main { min-width: 0; }
+.list-row .title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.list-row .meta {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.list-row .value {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+  text-align: right;
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+.list-row .value.small {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.badge {
+  display: inline-block;
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.3px;
+}
+.badge.sale { background: #E1EEE7; color: var(--success); }
+.badge.purchase { background: #F3E7D0; color: var(--gold); }
+.badge.adjustment { background: #EDEBE3; color: var(--text-muted); }
+.badge.low-stock { background: #F6E1DE; color: var(--danger); }
+
+.empty-state {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 30px 10px;
+  font-size: 13px;
+}
+
+/* ---------------- Buttons ---------------- */
+.btn {
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 10px 16px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  text-align: center;
+}
+.btn-primary { background: var(--ink); color: #F2E8CF; }
+.btn-secondary { background: transparent; color: var(--ink); border-color: var(--ink); }
+.btn-danger { background: transparent; color: var(--danger); border-color: var(--danger); }
+.btn-block { width: 100%; display: block; }
+.btn-row { display: flex; gap: 8px; margin-top: 10px; }
+.btn-row .btn { flex: 1; }
+
+.fab {
+  position: fixed;
+  bottom: calc(var(--tabbar-h) + 16px);
+  left: 50%;
+  transform: translateX(calc(-50% + 190px));
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--gold);
+  color: var(--ink);
+  border: none;
+  font-size: 26px;
+  line-height: 52px;
+  text-align: center;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.25);
+  cursor: pointer;
+  z-index: 25;
+}
+
+/* ---------------- Forms ---------------- */
+.field { margin-bottom: 12px; }
+.field label {
+  display: block;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.field input, .field select, .field textarea {
+  width: 100%;
+  padding: 10px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--text);
+}
+.field input:focus, .field select:focus {
+  outline: 2px solid var(--gold);
+  outline-offset: 1px;
+}
+.field-row { display: flex; gap: 8px; }
+.field-row .field { flex: 1; }
+
+/* ---------------- Bottom sheet modal ---------------- */
+.sheet-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  z-index: 50;
+  display: none;
+}
+.sheet-overlay.open { display: block; }
+.sheet {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 480px;
+  max-height: 88vh;
+  background: var(--paper);
+  border-radius: 16px 16px 0 0;
+  padding: 16px 16px 20px;
+  overflow-y: auto;
+  box-shadow: 0 -6px 20px rgba(0,0,0,0.2);
+}
+.sheet-handle {
+  width: 40px;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  margin: 0 auto 12px;
+}
+.sheet-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.sheet-header h3 {
+  font-family: var(--font-display);
+  font-size: 16px;
+  margin: 0;
+  color: var(--ink);
+}
+.sheet-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+/* ---------------- History list ---------------- */
+.history-item {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text);
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--border);
+}
+.history-item .note { color: var(--text-muted); }
+
+/* ---------------- Recommender breakdown ---------------- */
+.breakdown-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--border);
+  font-size: 13px;
+}
+.breakdown-row .val { font-family: var(--font-mono); font-weight: 600; }
+.breakdown-row.total .val { color: var(--ink); font-size: 16px; }
+
+.note-box {
+  background: #FBF8F0;
+  border: 1px solid var(--gold-soft);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.toast {
+  position: fixed;
+  bottom: calc(var(--tabbar-h) + 16px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--ink);
+  color: #F2E8CF;
+  padding: 10px 18px;
+  border-radius: 20px;
+  font-size: 13px;
+  z-index: 60;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+.toast.show { opacity: 1; }
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
