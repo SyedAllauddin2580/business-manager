@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#1C3D3A" />
+<title>Retail Manager</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icons/icon-192.png" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+<div id="app-shell">
+
+  <div class="top-bar">
+    <div class="brand">Retail<span class="tag">Mgr</span></div>
+    <div class="date" id="top-date"></div>
+  </div>
+
+  <!-- ============ DASHBOARD ============ -->
+  <div class="tab-panel active" id="panel-dashboard">
+    <div class="chip-row" id="dash-range-chips">
+      <div class="chip" data-range="7">7d</div>
+      <div class="chip active" data-range="30">30d</div>
+      <div class="chip" data-range="90">90d</div>
+      <div class="chip" data-range="month">This month</div>
+    </div>
+
+    <div class="kpi-grid" id="dash-kpis"></div>
+
+    <div class="section-title"><span>Daily Turnover Trend</span><span class="rule"></span></div>
+    <div class="chart-card"><canvas id="chart-trend"></canvas></div>
+
+    <div class="section-title"><span>Revenue by Category</span><span class="rule"></span></div>
+    <div class="chart-card"><canvas id="chart-category"></canvas></div>
+
+    <div class="section-title"><span>Top 5 Products</span><span class="rule"></span></div>
+    <div class="chart-card"><canvas id="chart-top-products"></canvas></div>
+
+    <div class="section-title"><span>Low Stock Alerts</span><span class="rule"></span></div>
+    <div id="low-stock-list"></div>
+  </div>
+
+  <!-- ============ CATALOG ============ -->
+  <div class="tab-panel" id="panel-catalog">
+    <div class="field">
+      <input type="text" id="catalog-search" placeholder="Search products or SKU…" />
+    </div>
+    <div class="chip-row" id="catalog-category-chips"></div>
+    <div class="section-title"><span>Products</span><span class="rule"></span></div>
+    <div id="catalog-list"></div>
+  </div>
+
+  <!-- ============ PRICING ============ -->
+  <div class="tab-panel" id="panel-pricing">
+    <div class="section-title"><span>Purchase vs Selling Price</span><span class="rule"></span></div>
+    <div id="pricing-list"></div>
+  </div>
+
+  <!-- ============ TRANSACTIONS ============ -->
+  <div class="tab-panel" id="panel-transactions">
+    <div class="chip-row" id="txn-type-chips">
+      <div class="chip active" data-type="all">All</div>
+      <div class="chip" data-type="sale">Sales</div>
+      <div class="chip" data-type="purchase">Purchases</div>
+      <div class="chip" data-type="adjustment">Adjustments</div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>From</label><input type="date" id="txn-from" /></div>
+      <div class="field"><label>To</label><input type="date" id="txn-to" /></div>
+    </div>
+    <div class="kpi-grid" id="txn-summary" style="margin-bottom:10px;"></div>
+    <div class="section-title"><span>Ledger</span><span class="rule"></span></div>
+    <div id="txn-list"></div>
+  </div>
+
+  <!-- ============ EXPENSES & RECOMMENDER ============ -->
+  <div class="tab-panel" id="panel-expenses">
+    <div class="section-title"><span>Monthly Overhead</span><span class="rule"></span></div>
+    <div id="expenses-total" class="kpi-card" style="margin-bottom:10px;"></div>
+    <div id="expenses-list"></div>
+
+    <div class="section-title"><span>Selling Price Recommender</span><span class="rule"></span></div>
+    <div class="note-box">
+      Total monthly overhead ÷ this product's estimated monthly units sold = overhead per unit.
+      Add that to the purchase price for the true break-even cost, then add your target margin
+      on top of <em>that</em> — not just on top of the purchase price.
+    </div>
+    <div class="field">
+      <label>Product</label>
+      <select id="rec-product"></select>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Est. Monthly Units</label><input type="number" id="rec-units" /></div>
+      <div class="field"><label>Target Margin %</label><input type="number" id="rec-margin" value="30" /></div>
+    </div>
+    <button class="btn btn-primary btn-block" id="rec-calculate">Calculate Recommendation</button>
+    <div id="rec-breakdown" style="margin-top:12px;"></div>
+
+    <div class="section-title"><span>Quick View — All Products</span><span class="rule"></span></div>
+    <div id="rec-all-list"></div>
+  </div>
+
+  <!-- ============ REPORTS ============ -->
+  <div class="tab-panel" id="panel-reports">
+    <div class="chip-row" id="report-range-chips">
+      <div class="chip" data-range="0">Today</div>
+      <div class="chip" data-range="7">7 days</div>
+      <div class="chip active" data-range="30">30 days</div>
+      <div class="chip" data-range="90">90 days</div>
+    </div>
+    <div class="kpi-grid" id="report-kpis"></div>
+    <div class="section-title"><span>Sales by Product</span><span class="rule"></span></div>
+    <div id="report-product-list"></div>
+
+    <div class="section-title"><span>Backup &amp; Restore</span><span class="rule"></span></div>
+    <div class="note-box">
+      Your data lives only on this device's browser storage. Export a backup file
+      regularly (e.g., weekly) and save it somewhere safe — Google Drive, email to
+      yourself, etc. — in case this phone or browser data is ever lost.
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-secondary" id="export-backup-btn">Export Backup</button>
+      <button class="btn btn-secondary" id="import-backup-btn">Restore Backup</button>
+    </div>
+    <input type="file" id="import-file-input" accept="application/json" style="display:none;" />
+  </div>
+
+  <!-- ============ Bottom nav ============ -->
+  <div class="tab-bar" id="tab-bar">
+    <button class="tab-btn active" data-tab="dashboard">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+      <span>Dashboard</span>
+    </button>
+    <button class="tab-btn" data-tab="catalog">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7"/></svg>
+      <span>Catalog</span>
+    </button>
+    <button class="tab-btn" data-tab="pricing">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41L11 3.83A2 2 0 009.59 3.24H4a1 1 0 00-1 1v5.59a2 2 0 00.59 1.41l9.58 9.58a2 2 0 002.83 0l4.59-4.59a2 2 0 000-2.82z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>
+      <span>Prices</span>
+    </button>
+    <button class="tab-btn" data-tab="transactions">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12l1 5H5l1-5z"/><path d="M5 8v12a1 1 0 001 1h12a1 1 0 001-1V8"/><path d="M9 13h6"/></svg>
+      <span>Sales</span>
+    </button>
+    <button class="tab-btn" data-tab="expenses">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 9.5c0-1.5 1.3-2.5 3-2.5s3 1 3 2.2c0 2.6-6 1.5-6 4.3 0 1.3 1.3 2.5 3 2.5s3-1 3-2.5"/></svg>
+      <span>Expenses</span>
+    </button>
+    <button class="tab-btn" data-tab="reports">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19h16"/><path d="M7 19V9M12 19V5M17 19v-7"/></svg>
+      <span>Reports</span>
+    </button>
+  </div>
+
+  <button class="fab" id="fab-btn">+</button>
+
+  <!-- ============ Bottom sheet (shared modal for add/edit forms) ============ -->
+  <div class="sheet-overlay" id="sheet-overlay">
+    <div class="sheet" id="sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <h3 id="sheet-title">Title</h3>
+        <button class="sheet-close" id="sheet-close">✕</button>
+      </div>
+      <div id="sheet-body"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+</div>
+
+<script src="js/db.js"></script>
+<script src="js/logic.js"></script>
+<script src="js/charts.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
