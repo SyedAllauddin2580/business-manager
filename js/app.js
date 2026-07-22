@@ -1004,19 +1004,23 @@ async function openTransactionSheet() {
   const creditDetails = el("div");
   creditDetails.style.display = "none";
   const custField = el("div", "field");
-  custField.appendChild(el("label", null, "Customer"));
-  const custSelect = el("select");
-  if (!customers.length) {
-    const opt = el("option", null, "— add a customer in the Credit tab first —");
-    opt.value = "";
-    custSelect.appendChild(opt);
-  }
+  custField.appendChild(el("label", null, "Customer Name"));
+  const custInput = el("input");
+  custInput.type = "text";
+  custInput.placeholder = "Type to search existing or add new…";
+  custInput.setAttribute("list", "customer-name-datalist");
+  const custDatalist = el("datalist");
+  custDatalist.id = "customer-name-datalist";
   customers.forEach((c) => {
-    const opt = el("option", null, c.name);
-    opt.value = c.id;
-    custSelect.appendChild(opt);
+    const opt = el("option");
+    opt.value = c.name;
+    custDatalist.appendChild(opt);
   });
-  custField.appendChild(custSelect);
+  custField.appendChild(custInput);
+  custField.appendChild(custDatalist);
+  const custHint = el("div", "meta", "Existing customers show as you type. New name? It'll be added automatically — add their phone/notes later in the Credit tab.");
+  custHint.style.marginTop = "4px";
+  custField.appendChild(custHint);
   creditDetails.appendChild(custField);
 
   const paidNowField = el("div", "field");
@@ -1052,10 +1056,12 @@ async function openTransactionSheet() {
 
     const isCredit = typeSelect.value === "sale" && creditCheckbox.checked;
     if (isCredit) {
-      if (!custSelect.value) { showToast("Choose a customer, or add one in the Credit tab first"); return; }
+      const custName = custInput.value.trim();
+      if (!custName) { showToast("Enter the customer's name"); return; }
+      const customerId = await db.findOrCreateCustomerByName(custName);
       const paidNow = parseFloat(paidNowInput.value) || 0;
       await db.addCreditSale({
-        customer_id: parseInt(custSelect.value, 10),
+        customer_id: customerId,
         product_id: parseInt(prodSelect.value, 10),
         quantity: qty,
         unit_price: price,

@@ -303,6 +303,20 @@ class Database {
     return all.sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  /**
+   * Looks up a customer by name (case-insensitive, trimmed exact match).
+   * If none exists yet, creates a bare-bones customer record with just
+   * that name — phone/notes can be filled in later from the Credit tab.
+   * Returns the customer id either way.
+   */
+  async findOrCreateCustomerByName(name) {
+    name = name.trim();
+    const customers = await this.getCustomers();
+    const match = customers.find((c) => c.name.toLowerCase() === name.toLowerCase());
+    if (match) return match.id;
+    return this.addCustomer(name, "", "");
+  }
+
   async getCustomer(id) {
     const store = tx(this.idb, "customers").objectStore("customers");
     return reqToPromise(store.get(id));
