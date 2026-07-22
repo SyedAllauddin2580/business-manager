@@ -60,6 +60,19 @@
     <div id="pricing-list"></div>
   </div>
 
+  <!-- ============ CREDIT / DUES ============ -->
+  <div class="tab-panel" id="panel-credit">
+    <div class="kpi-grid" id="credit-kpis"></div>
+    <div class="chip-row" id="credit-filter-chips">
+      <div class="chip active" data-filter="due">Has Dues</div>
+      <div class="chip" data-filter="overdue">Overdue (7+ days)</div>
+      <div class="chip" data-filter="all">All Customers</div>
+      <div class="chip" id="credit-new-customer-chip" style="border-style:dashed;">+ New customer</div>
+    </div>
+    <div class="section-title"><span>Customers</span><span class="rule"></span></div>
+    <div id="credit-list"></div>
+  </div>
+
   <!-- ============ TRANSACTIONS ============ -->
   <div class="tab-panel" id="panel-transactions">
     <div class="chip-row" id="txn-type-chips">
@@ -104,6 +117,40 @@
     <div id="rec-all-list"></div>
   </div>
 
+  <!-- ============ CAPITAL ============ -->
+  <div class="tab-panel" id="panel-capital">
+    <div class="section-title"><span>Initial Capital</span><span class="rule"></span></div>
+    <div class="note-box">Enter the initial capital amount of the business — the money you started this business with.</div>
+    <div class="field-row">
+      <div class="field" style="flex:2;">
+        <label>Initial Capital Amount</label>
+        <input type="number" id="capital-initial-input" step="0.01" />
+      </div>
+      <div class="field" style="flex:1; display:flex; align-items:flex-end;">
+        <button class="btn btn-primary btn-block" id="capital-initial-save">Save</button>
+      </div>
+    </div>
+
+    <div class="section-title"><span>Current Capital</span><span class="rule"></span></div>
+    <div class="kpi-grid" id="capital-kpis"></div>
+
+    <div class="note-box" style="margin-top:12px;">
+      Current Capital = Stock on hand (valued at purchase price) + Cash in Hand.
+      Cash in Hand defaults to the total purchase-price cost of everything sold so far —
+      edit it to match what you've actually counted.
+    </div>
+    <div class="field-row">
+      <div class="field" style="flex:2;">
+        <label>Cash in Hand</label>
+        <input type="number" id="capital-cash-input" step="0.01" />
+      </div>
+      <div class="field" style="flex:1; display:flex; align-items:flex-end;">
+        <button class="btn btn-primary btn-block" id="capital-cash-save">Save</button>
+      </div>
+    </div>
+    <div id="capital-deficit-warning" style="display:none; color: var(--danger); font-size: 13px; font-weight: 600; margin: -6px 0 12px;"></div>
+  </div>
+
   <!-- ============ REPORTS ============ -->
   <div class="tab-panel" id="panel-reports">
     <div class="chip-row" id="report-range-chips">
@@ -143,6 +190,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41L11 3.83A2 2 0 009.59 3.24H4a1 1 0 00-1 1v5.59a2 2 0 00.59 1.41l9.58 9.58a2 2 0 002.83 0l4.59-4.59a2 2 0 000-2.82z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>
       <span>Prices</span>
     </button>
+    <button class="tab-btn" data-tab="credit">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="13" rx="2"/><path d="M2 10h20"/><path d="M6 15h4"/></svg>
+      <span>Credit</span>
+    </button>
     <button class="tab-btn" data-tab="transactions">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12l1 5H5l1-5z"/><path d="M5 8v12a1 1 0 001 1h12a1 1 0 001-1V8"/><path d="M9 13h6"/></svg>
       <span>Sales</span>
@@ -150,6 +201,10 @@
     <button class="tab-btn" data-tab="expenses">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 9.5c0-1.5 1.3-2.5 3-2.5s3 1 3 2.2c0 2.6-6 1.5-6 4.3 0 1.3 1.3 2.5 3 2.5s3-1 3-2.5"/></svg>
       <span>Expenses</span>
+    </button>
+    <button class="tab-btn" data-tab="capital">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"/><path d="M5 21V10l5-5 5 5v11"/><path d="M13 21v-7h4v7"/><path d="M9 21v-4h2v4"/></svg>
+      <span>Capital</span>
     </button>
     <button class="tab-btn" data-tab="reports">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19h16"/><path d="M7 19V9M12 19V5M17 19v-7"/></svg>

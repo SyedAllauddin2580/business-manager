@@ -46,3 +46,10 @@ function proratedOverhead(monthlyOverhead, startDateStr, endDateStr) {
   const daysInRange = Math.max(Math.round((d2 - d1) / 86400000) + 1, 1);
   return monthlyOverhead * (daysInRange / 30.44);
 }
+
+function daysSince(dateStr) {
+  if (!dateStr) return null;
+  const then = new Date(dateStr);
+  const now = new Date();
+  return Math.floor((now - then) / 86400000);
+}

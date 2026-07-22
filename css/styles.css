@@ -115,24 +115,28 @@ html, body {
   background: var(--surface);
   border-top: 1px solid var(--border);
   display: flex;
+  overflow-x: auto;
+  scrollbar-width: none;
   z-index: 30;
 }
+.tab-bar::-webkit-scrollbar { display: none; }
 .tab-btn {
-  flex: 1;
+  flex: 0 0 62px;
   border: none;
   background: none;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: 2px;
   font-family: var(--font-body);
-  font-size: 10px;
+  font-size: 9px;
   color: var(--text-muted);
   cursor: pointer;
   position: relative;
+  padding: 0 2px;
 }
-.tab-btn svg { width: 20px; height: 20px; }
+.tab-btn svg { width: 18px; height: 18px; }
 .tab-btn.active { color: var(--ink); }
 .tab-btn.active::before {
   content: "";
@@ -276,6 +280,11 @@ html, body {
 .badge.purchase { background: #F3E7D0; color: var(--gold); }
 .badge.adjustment { background: #EDEBE3; color: var(--text-muted); }
 .badge.low-stock { background: #F6E1DE; color: var(--danger); }
+.badge.overdue { background: #F6E1DE; color: var(--danger); }
+.badge.credit-ok { background: #E1EEE7; color: var(--success); }
+
+.value.danger { color: var(--danger) !important; }
+.value.success { color: var(--success) !important; }
 
 .empty-state {
   text-align: center;

@@ -15,6 +15,7 @@ let state = {
   txnType: "all",
   txnFrom: "",
   txnTo: "",
+  creditFilter: "due",
 };
 
 // ------------------------------------------------------------------
@@ -33,9 +34,11 @@ window.addEventListener("DOMContentLoaded", async () => {
   wireDashboard();
   wireCatalog();
   wirePricing();
+  wireCredit();
   wireTransactions();
   wireExpenses();
   wireReports();
+  wireCapital();
   wireFab();
   wireSheet();
 
@@ -46,9 +49,11 @@ async function renderAll() {
   await renderDashboard();
   await renderCatalog();
   await renderPricing();
+  await renderCredit();
   await renderTransactions();
   await renderExpenses();
   await renderReports();
+  await renderCapital();
 }
 
 // ------------------------------------------------------------------
@@ -93,17 +98,20 @@ function switchTab(tab) {
   // Canvases can't size themselves correctly while their tab is display:none,
   // so re-render charts right after the dashboard tab becomes visible.
   if (tab === "dashboard") renderDashboard();
+  if (tab === "capital") renderCapital();
 }
 
 function updateFabVisibility() {
   const fab = document.getElementById("fab-btn");
-  fab.style.display = state.activeTab === "reports" || state.activeTab === "dashboard" ? "none" : "flex";
+  const hideOn = ["reports", "dashboard", "capital"];
+  fab.style.display = hideOn.includes(state.activeTab) ? "none" : "flex";
 }
 
 function wireFab() {
   document.getElementById("fab-btn").addEventListener("click", () => {
     if (state.activeTab === "catalog") openProductSheet(null);
     else if (state.activeTab === "pricing") showToast("Tap a product to update its price");
+    else if (state.activeTab === "credit") openRecordPaymentSheet();
     else if (state.activeTab === "transactions") openTransactionSheet();
     else if (state.activeTab === "expenses") openExpenseSheet();
   });
@@ -179,6 +187,7 @@ async function renderDashboard() {
   const lowStock = await db.getLowStockProducts();
   const inv = await db.inventoryValue();
   const productCount = await db.countProducts();
+  const totalDues = await db.getTotalOutstandingDues();
 
   const kpis = [
     ["Today's Turnover", money(todayTurnover)],
@@ -189,6 +198,7 @@ async function renderDashboard() {
     ["Low Stock Alerts", String(lowStock.length)],
     ["Inventory (cost)", money(inv.cost_value)],
     ["Inventory (retail)", money(inv.retail_value)],
+    ["Outstanding Dues", money(totalDues)],
   ];
   const kpiGrid = document.getElementById("dash-kpis");
   kpiGrid.innerHTML = "";
@@ -566,6 +576,270 @@ async function openPriceSheet(product) {
 }
 
 // ==================================================================
+// CREDIT / DUES
+// ==================================================================
+function wireCredit() {
+  document.querySelectorAll("#credit-filter-chips .chip[data-filter]").forEach((chip) => {
+    chip.addEventListener("click", async () => {
+      document.querySelectorAll("#credit-filter-chips .chip[data-filter]").forEach((c) => c.classList.remove("active"));
+      chip.classList.add("active");
+      state.creditFilter = chip.dataset.filter;
+      await renderCredit();
+    });
+  });
+  document.getElementById("credit-new-customer-chip").addEventListener("click", () => openCustomerSheet(null));
+}
+
+async function renderCredit() {
+  const customers = await db.getCustomersWithBalances();
+  const totalDues = customers.reduce((sum, c) => sum + Math.max(c.balance, 0), 0);
+  const overdueCount = customers.filter((c) => c.balance > 0 && daysSince(c.last_activity) >= 7).length;
+
+  const kpiGrid = document.getElementById("credit-kpis");
+  kpiGrid.innerHTML = "";
+  [
+    ["Total Outstanding Dues", money(totalDues)],
+    ["Customers Overdue (7+ days)", String(overdueCount)],
+  ].forEach(([label, value]) => {
+    const card = el("div", "kpi-card");
+    card.appendChild(el("div", "kpi-label", label));
+    card.appendChild(el("div", "kpi-value", value));
+    kpiGrid.appendChild(card);
+  });
+
+  let filtered = customers;
+  if (state.creditFilter === "due") filtered = customers.filter((c) => c.balance > 0);
+  else if (state.creditFilter === "overdue") filtered = customers.filter((c) => c.balance > 0 && daysSince(c.last_activity) >= 7);
+
+  filtered = filtered.slice().sort((a, b) => b.balance - a.balance);
+
+  const list = document.getElementById("credit-list");
+  list.innerHTML = "";
+  if (!filtered.length) {
+    const msg = state.creditFilter === "all" ? "No customers added yet." : "Nobody owes anything right now 🎉";
+    list.appendChild(el("div", "empty-state", msg));
+    return;
+  }
+
+  filtered.forEach((c) => {
+    const days = daysSince(c.last_activity);
+    const isOverdue = c.balance > 0 && days !== null && days >= 7;
+    const row = el("div", "list-row");
+    const main = el("div", "main");
+    const titleWrap = el("div", "title");
+    titleWrap.textContent = c.name + " ";
+    if (isOverdue) {
+      const badge = el("span", "badge overdue", `${days}d overdue`);
+      titleWrap.appendChild(badge);
+    } else if (c.balance <= 0 && c.entry_count > 0) {
+      const badge = el("span", "badge credit-ok", "clear");
+      titleWrap.appendChild(badge);
+    }
+    main.appendChild(titleWrap);
+    main.appendChild(el("div", "meta", c.phone ? c.phone : "No phone on file"));
+    row.appendChild(main);
+    const valClass = c.balance > 0 ? "value danger" : "value success";
+    row.appendChild(el("div", valClass, money(Math.abs(c.balance)) + (c.balance < 0 ? " cr." : "")));
+    row.addEventListener("click", () => openCustomerLedgerSheet(c));
+    list.appendChild(row);
+  });
+}
+
+function openCustomerSheet(customer) {
+  const isEdit = !!customer;
+  const body = el("div");
+
+  const nameField = el("div", "field");
+  nameField.appendChild(el("label", null, "Customer Name"));
+  const nameInput = el("input");
+  nameInput.type = "text";
+  nameInput.value = isEdit ? customer.name : "";
+  nameField.appendChild(nameInput);
+  body.appendChild(nameField);
+
+  const phoneField = el("div", "field");
+  phoneField.appendChild(el("label", null, "Phone (optional)"));
+  const phoneInput = el("input");
+  phoneInput.type = "text";
+  phoneInput.value = isEdit ? customer.phone || "" : "";
+  phoneField.appendChild(phoneInput);
+  body.appendChild(phoneField);
+
+  const notesField = el("div", "field");
+  notesField.appendChild(el("label", null, "Notes (optional)"));
+  const notesInput = el("input");
+  notesInput.type = "text";
+  notesInput.value = isEdit ? customer.notes || "" : "";
+  notesField.appendChild(notesInput);
+  body.appendChild(notesField);
+
+  const btnRow = el("div", "btn-row");
+  const saveBtn = el("button", "btn btn-primary", isEdit ? "Save Changes" : "Add Customer");
+  btnRow.appendChild(saveBtn);
+  if (isEdit) {
+    const delBtn = el("button", "btn btn-danger", "Delete");
+    delBtn.addEventListener("click", async () => {
+      if (confirm(`Delete ${customer.name} and their entire credit history? This cannot be undone.`)) {
+        await db.deleteCustomer(customer.id);
+        closeSheet();
+        showToast("Customer deleted");
+        await renderCredit();
+      }
+    });
+    btnRow.appendChild(delBtn);
+  }
+  body.appendChild(btnRow);
+
+  saveBtn.addEventListener("click", async () => {
+    const name = nameInput.value.trim();
+    if (!name) { showToast("Customer name is required"); return; }
+    if (isEdit) {
+      await db.updateCustomer(customer.id, { name, phone: phoneInput.value.trim(), notes: notesInput.value.trim() });
+    } else {
+      await db.addCustomer(name, phoneInput.value.trim(), notesInput.value.trim());
+    }
+    closeSheet();
+    showToast(isEdit ? "Customer updated" : "Customer added");
+    await renderCredit();
+  });
+
+  openSheet(isEdit ? "Edit Customer" : "New Customer", body);
+}
+
+async function openCustomerLedgerSheet(customer) {
+  const body = el("div");
+
+  const balanceCard = el("div", "kpi-card");
+  balanceCard.appendChild(el("div", "kpi-label", customer.phone || "Balance"));
+  const balVal = el("div", "kpi-value", money(Math.abs(customer.balance)) + (customer.balance < 0 ? " credit" : customer.balance > 0 ? " due" : ""));
+  if (customer.balance > 0) balVal.classList.add("danger");
+  else if (customer.balance < 0) balVal.classList.add("success");
+  balanceCard.appendChild(balVal);
+  body.appendChild(balanceCard);
+
+  const editBtn = el("button", "btn btn-secondary btn-block", "Edit Customer Details");
+  editBtn.style.marginTop = "8px";
+  editBtn.addEventListener("click", () => openCustomerSheet(customer));
+  body.appendChild(editBtn);
+
+  body.appendChild(el("div", "section-title", "Record a Payment"));
+  const row = el("div", "field-row");
+  const amtField = el("div", "field");
+  amtField.appendChild(el("label", null, "Amount Received"));
+  const amtInput = el("input");
+  amtInput.type = "number";
+  amtInput.step = "0.01";
+  amtField.appendChild(amtInput);
+  row.appendChild(amtField);
+  const dateField = el("div", "field");
+  dateField.appendChild(el("label", null, "Date"));
+  const dateInput = el("input");
+  dateInput.type = "date";
+  dateInput.value = todayStr();
+  dateField.appendChild(dateInput);
+  row.appendChild(dateField);
+  body.appendChild(row);
+
+  const notesField = el("div", "field");
+  notesField.appendChild(el("label", null, "Notes (optional)"));
+  const notesInput = el("input");
+  notesInput.type = "text";
+  notesField.appendChild(notesInput);
+  body.appendChild(notesField);
+
+  const payBtn = el("button", "btn btn-primary btn-block", "Record Payment");
+  payBtn.addEventListener("click", async () => {
+    const amount = parseFloat(amtInput.value);
+    if (isNaN(amount) || amount <= 0) { showToast("Enter a valid payment amount"); return; }
+    await db.addCreditPayment(customer.id, amount, dateInput.value || todayStr(), notesInput.value.trim());
+    closeSheet();
+    showToast("Payment recorded");
+    await renderCredit();
+    await renderDashboard();
+  });
+  body.appendChild(payBtn);
+
+  body.appendChild(el("div", "section-title", "Ledger History"));
+  const ledger = await db.getCreditLedger(customer.id);
+  const ledgerWrap = el("div");
+  if (!ledger.length) {
+    ledgerWrap.appendChild(el("div", "empty-state", "No credit activity yet."));
+  } else {
+    ledger.forEach((entry) => {
+      const sign = entry.entry_type === "charge" ? "+" : "−";
+      const item = el(
+        "div",
+        "history-item",
+        `${entry.date} — ${sign}${money(entry.amount)} <span class="note">(${entry.entry_type}${entry.notes ? ": " + entry.notes : ""})</span>`
+      );
+      ledgerWrap.appendChild(item);
+    });
+  }
+  body.appendChild(ledgerWrap);
+
+  openSheet(customer.name, body);
+}
+
+async function openRecordPaymentSheet() {
+  const customers = await db.getCustomersWithBalances();
+  const withDues = customers.filter((c) => c.balance > 0);
+  if (!withDues.length) {
+    showToast("No outstanding dues right now");
+    return;
+  }
+  const body = el("div");
+
+  const custField = el("div", "field");
+  custField.appendChild(el("label", null, "Customer"));
+  const custSelect = el("select");
+  withDues.forEach((c) => {
+    const opt = el("option", null, `${c.name} — owes ${money(c.balance)}`);
+    opt.value = c.id;
+    custSelect.appendChild(opt);
+  });
+  custField.appendChild(custSelect);
+  body.appendChild(custField);
+
+  const row = el("div", "field-row");
+  const amtField = el("div", "field");
+  amtField.appendChild(el("label", null, "Amount Received"));
+  const amtInput = el("input");
+  amtInput.type = "number";
+  amtInput.step = "0.01";
+  amtField.appendChild(amtInput);
+  row.appendChild(amtField);
+  const dateField = el("div", "field");
+  dateField.appendChild(el("label", null, "Date"));
+  const dateInput = el("input");
+  dateInput.type = "date";
+  dateInput.value = todayStr();
+  dateField.appendChild(dateInput);
+  row.appendChild(dateField);
+  body.appendChild(row);
+
+  const notesField = el("div", "field");
+  notesField.appendChild(el("label", null, "Notes (optional)"));
+  const notesInput = el("input");
+  notesInput.type = "text";
+  notesField.appendChild(notesInput);
+  body.appendChild(notesField);
+
+  const payBtn = el("button", "btn btn-primary btn-block", "Record Payment");
+  payBtn.addEventListener("click", async () => {
+    const amount = parseFloat(amtInput.value);
+    if (isNaN(amount) || amount <= 0) { showToast("Enter a valid payment amount"); return; }
+    await db.addCreditPayment(parseInt(custSelect.value, 10), amount, dateInput.value || todayStr(), notesInput.value.trim());
+    closeSheet();
+    showToast("Payment recorded");
+    await renderCredit();
+    await renderDashboard();
+  });
+  body.appendChild(payBtn);
+
+  openSheet("Record Payment", body);
+}
+
+// ==================================================================
 // TRANSACTIONS
 // ==================================================================
 function wireTransactions() {
@@ -711,24 +985,100 @@ async function openTransactionSheet() {
   notesField.appendChild(notesInput);
   body.appendChild(notesField);
 
+  // ---- On-credit option (only relevant for sales) ----
+  const customers = await db.getCustomers();
+  const creditToggleField = el("div", "field");
+  const creditLabel = el("label");
+  creditLabel.style.display = "flex";
+  creditLabel.style.alignItems = "center";
+  creditLabel.style.gap = "6px";
+  creditLabel.style.textTransform = "none";
+  const creditCheckbox = el("input");
+  creditCheckbox.type = "checkbox";
+  creditCheckbox.style.width = "auto";
+  creditLabel.appendChild(creditCheckbox);
+  creditLabel.appendChild(document.createTextNode("Sold on credit (customer will pay later)"));
+  creditToggleField.appendChild(creditLabel);
+  body.appendChild(creditToggleField);
+
+  const creditDetails = el("div");
+  creditDetails.style.display = "none";
+  const custField = el("div", "field");
+  custField.appendChild(el("label", null, "Customer"));
+  const custSelect = el("select");
+  if (!customers.length) {
+    const opt = el("option", null, "— add a customer in the Credit tab first —");
+    opt.value = "";
+    custSelect.appendChild(opt);
+  }
+  customers.forEach((c) => {
+    const opt = el("option", null, c.name);
+    opt.value = c.id;
+    custSelect.appendChild(opt);
+  });
+  custField.appendChild(custSelect);
+  creditDetails.appendChild(custField);
+
+  const paidNowField = el("div", "field");
+  paidNowField.appendChild(el("label", null, "Amount Paid Now (0 if fully on credit)"));
+  const paidNowInput = el("input");
+  paidNowInput.type = "number";
+  paidNowInput.step = "0.01";
+  paidNowInput.value = "0";
+  paidNowField.appendChild(paidNowInput);
+  creditDetails.appendChild(paidNowField);
+  body.appendChild(creditDetails);
+
+  const toggleCreditVisibility = () => {
+    const showCredit = typeSelect.value === "sale" && creditCheckbox.checked;
+    creditDetails.style.display = showCredit ? "block" : "none";
+  };
+  creditCheckbox.addEventListener("change", toggleCreditVisibility);
+  typeSelect.addEventListener("change", () => {
+    if (typeSelect.value !== "sale") {
+      creditCheckbox.checked = false;
+      creditToggleField.style.display = "none";
+    } else {
+      creditToggleField.style.display = "block";
+    }
+    toggleCreditVisibility();
+  });
+
   const saveBtn = el("button", "btn btn-primary btn-block", "Add Transaction");
   saveBtn.addEventListener("click", async () => {
     const qty = parseFloat(qtyInput.value);
     const price = parseFloat(priceInput.value);
     if (isNaN(qty) || isNaN(price)) { showToast("Quantity and price must be numeric"); return; }
-    await db.addTransaction(
-      parseInt(prodSelect.value, 10),
-      typeSelect.value,
-      qty,
-      price,
-      dateInput.value || todayStr(),
-      notesInput.value.trim()
-    );
+
+    const isCredit = typeSelect.value === "sale" && creditCheckbox.checked;
+    if (isCredit) {
+      if (!custSelect.value) { showToast("Choose a customer, or add one in the Credit tab first"); return; }
+      const paidNow = parseFloat(paidNowInput.value) || 0;
+      await db.addCreditSale({
+        customer_id: parseInt(custSelect.value, 10),
+        product_id: parseInt(prodSelect.value, 10),
+        quantity: qty,
+        unit_price: price,
+        amount_paid_now: paidNow,
+        date: dateInput.value || todayStr(),
+        notes: notesInput.value.trim(),
+      });
+    } else {
+      await db.addTransaction(
+        parseInt(prodSelect.value, 10),
+        typeSelect.value,
+        qty,
+        price,
+        dateInput.value || todayStr(),
+        notesInput.value.trim()
+      );
+    }
     closeSheet();
-    showToast("Transaction recorded");
+    showToast(isCredit ? "Credit sale recorded" : "Transaction recorded");
     await renderTransactions();
     await renderCatalog();
     await renderDashboard();
+    await renderCredit();
   });
   body.appendChild(saveBtn);
 
@@ -1001,4 +1351,85 @@ async function renderReports() {
     row.appendChild(el("div", "value", money(profit)));
     list.appendChild(row);
   });
+}
+
+// ==================================================================
+// CAPITAL
+// ==================================================================
+function wireCapital() {
+  document.getElementById("capital-initial-save").addEventListener("click", async () => {
+    const val = parseFloat(document.getElementById("capital-initial-input").value);
+    if (isNaN(val) || val < 0) { showToast("Enter a valid initial capital amount"); return; }
+    await db.setSetting("initial_capital", val);
+    showToast("Initial capital saved");
+    await renderCapital();
+  });
+
+  document.getElementById("capital-cash-save").addEventListener("click", async () => {
+    const val = parseFloat(document.getElementById("capital-cash-input").value);
+    if (isNaN(val) || val < 0) { showToast("Enter a valid cash-in-hand amount"); return; }
+    await db.setSetting("cash_in_hand", val);
+    showToast("Cash in hand saved");
+    await renderCapital();
+  });
+}
+
+/** All-time total purchase-price cost of every unit ever sold — the default/reference cash-in-hand figure. */
+async function computeDefaultCashInHand() {
+  const allSales = await db.getTransactions({ ttype: "sale" });
+  const products = await db.getProducts();
+  const costLookup = Object.fromEntries(products.map((p) => [p.id, p.purchase_price]));
+  const result = computeCogsAndProfit(allSales, costLookup);
+  return result.cogs;
+}
+
+async function renderCapital() {
+  const initialCapitalSaved = await db.getSetting("initial_capital", null);
+  const initialCapital = initialCapitalSaved !== null ? parseFloat(initialCapitalSaved) : 0;
+
+  const initialInput = document.getElementById("capital-initial-input");
+  if (document.activeElement !== initialInput) {
+    initialInput.value = initialCapitalSaved !== null ? initialCapital : "";
+  }
+
+  const defaultCash = await computeDefaultCashInHand();
+  const cashSaved = await db.getSetting("cash_in_hand", null);
+  const cashInHand = cashSaved !== null ? parseFloat(cashSaved) : defaultCash;
+
+  const cashInput = document.getElementById("capital-cash-input");
+  if (document.activeElement !== cashInput) {
+    cashInput.value = cashInHand;
+  }
+  cashInput.placeholder = `Default: ${money(defaultCash)}`;
+
+  const inv = await db.inventoryValue();
+  const stockValue = inv.cost_value;
+  const currentCapital = stockValue + cashInHand;
+  const capitalChange = currentCapital - initialCapital;
+
+  const kpiGrid = document.getElementById("capital-kpis");
+  kpiGrid.innerHTML = "";
+  const kpis = [
+    ["Stock Value (at cost)", money(stockValue)],
+    ["Cash in Hand", money(cashInHand)],
+    ["Current Capital", money(currentCapital)],
+    ["Change vs Initial", (capitalChange >= 0 ? "+" : "") + money(capitalChange)],
+  ];
+  kpis.forEach(([label, value], i) => {
+    const card = el("div", "kpi-card");
+    card.appendChild(el("div", "kpi-label", label));
+    const valEl = el("div", "kpi-value", value);
+    if (i === 3) valEl.classList.add(capitalChange >= 0 ? "success" : "danger");
+    card.appendChild(valEl);
+    kpiGrid.appendChild(card);
+  });
+
+  const warning = document.getElementById("capital-deficit-warning");
+  if (cashInHand < defaultCash) {
+    const deficit = defaultCash - cashInHand;
+    warning.textContent = `⚠ You are having a deficit of ${money(deficit)} in capital`;
+    warning.style.display = "block";
+  } else {
+    warning.style.display = "none";
+  }
 }
