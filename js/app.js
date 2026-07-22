@@ -16,6 +16,7 @@ let state = {
   txnFrom: "",
   txnTo: "",
   creditFilter: "due",
+  loanFilter: "all",
 };
 
 // ------------------------------------------------------------------
@@ -35,6 +36,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   wireCatalog();
   wirePricing();
   wireCredit();
+  wireLoans();
   wireTransactions();
   wireExpenses();
   wireReports();
@@ -50,6 +52,7 @@ async function renderAll() {
   await renderCatalog();
   await renderPricing();
   await renderCredit();
+  await renderLoans();
   await renderTransactions();
   await renderExpenses();
   await renderReports();
@@ -837,6 +840,231 @@ async function openRecordPaymentSheet() {
   body.appendChild(payBtn);
 
   openSheet("Record Payment", body);
+}
+
+// ==================================================================
+// OTHER CREDIT (loans/borrowings, either direction)
+// ==================================================================
+function wireLoans() {
+  document.querySelectorAll("#loan-filter-chips .chip[data-filter]").forEach((chip) => {
+    chip.addEventListener("click", async () => {
+      document.querySelectorAll("#loan-filter-chips .chip[data-filter]").forEach((c) => c.classList.remove("active"));
+      chip.classList.add("active");
+      state.loanFilter = chip.dataset.filter;
+      await renderLoans();
+    });
+  });
+  document.getElementById("loan-new-chip").addEventListener("click", () => openLoanSheet(null));
+}
+
+async function renderLoans() {
+  const totals = await db.getOtherCreditTotals();
+  const kpiGrid = document.getElementById("loan-kpis");
+  kpiGrid.innerHTML = "";
+  [
+    ["You Owe (Taken)", money(totals.takenOutstanding)],
+    ["Owed to You (Given)", money(totals.givenOutstanding)],
+  ].forEach(([label, value]) => {
+    const card = el("div", "kpi-card");
+    card.appendChild(el("div", "kpi-label", label));
+    card.appendChild(el("div", "kpi-value", value));
+    kpiGrid.appendChild(card);
+  });
+
+  const records = await db.getOtherCreditsWithBalances();
+  let filtered = records;
+  if (state.loanFilter === "taken") filtered = records.filter((r) => r.direction === "taken");
+  else if (state.loanFilter === "given") filtered = records.filter((r) => r.direction === "given");
+  filtered = filtered.slice().sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance));
+
+  const list = document.getElementById("loan-list");
+  list.innerHTML = "";
+  if (!filtered.length) {
+    list.appendChild(el("div", "empty-state", "No entries yet. Tap + New Entry to add one."));
+    return;
+  }
+  filtered.forEach((r) => {
+    const row = el("div", "list-row");
+    const main = el("div", "main");
+    const titleWrap = el("div", "title");
+    titleWrap.textContent = r.party_name + " ";
+    const dirBadge = el("span", "badge " + (r.direction === "taken" ? "purchase" : "sale"),
+                         r.direction === "taken" ? "you owe" : "owed to you");
+    titleWrap.appendChild(dirBadge);
+    if (r.balance <= 0 && r.entry_count > 0) titleWrap.appendChild(el("span", "badge credit-ok", "settled"));
+    main.appendChild(titleWrap);
+    main.appendChild(el("div", "meta", r.notes || (r.direction === "taken" ? "Money you borrowed" : "Money you lent")));
+    row.appendChild(main);
+    const valClass = r.balance > 0 ? "value danger" : "value success";
+    row.appendChild(el("div", valClass, money(Math.abs(r.balance))));
+    row.addEventListener("click", () => openLoanLedgerSheet(r));
+    list.appendChild(row);
+  });
+}
+
+function openLoanSheet(loan) {
+  const isEdit = !!loan;
+  const body = el("div");
+
+  const nameField = el("div", "field");
+  nameField.appendChild(el("label", null, "Party Name (person/business)"));
+  const nameInput = el("input");
+  nameInput.type = "text";
+  nameInput.value = isEdit ? loan.party_name : "";
+  nameField.appendChild(nameInput);
+  body.appendChild(nameField);
+
+  const dirField = el("div", "field");
+  dirField.appendChild(el("label", null, "Direction"));
+  const dirSelect = el("select");
+  const opt1 = el("option", null, "I Took Credit (I owe them)"); opt1.value = "taken";
+  const opt2 = el("option", null, "I Gave Credit (They owe me)"); opt2.value = "given";
+  dirSelect.appendChild(opt1);
+  dirSelect.appendChild(opt2);
+  if (isEdit) dirSelect.value = loan.direction;
+  dirField.appendChild(dirSelect);
+  body.appendChild(dirField);
+  if (isEdit) {
+    dirSelect.disabled = true; // direction fixed after creation to keep the ledger meaningful
+    dirField.appendChild(el("div", "meta", "Direction can't change once entries exist — delete and re-add if needed."));
+  }
+
+  let amountInput, dateInput;
+  if (!isEdit) {
+    const row = el("div", "field-row");
+    const amtField = el("div", "field");
+    amtField.appendChild(el("label", null, "Amount"));
+    amountInput = el("input");
+    amountInput.type = "number";
+    amountInput.step = "0.01";
+    amtField.appendChild(amountInput);
+    row.appendChild(amtField);
+
+    const dtField = el("div", "field");
+    dtField.appendChild(el("label", null, "Date"));
+    dateInput = el("input");
+    dateInput.type = "date";
+    dateInput.value = todayStr();
+    dtField.appendChild(dateInput);
+    row.appendChild(dtField);
+    body.appendChild(row);
+  }
+
+  const notesField = el("div", "field");
+  notesField.appendChild(el("label", null, "Notes (optional)"));
+  const notesInput = el("input");
+  notesInput.type = "text";
+  notesInput.value = isEdit ? loan.notes || "" : "";
+  notesField.appendChild(notesInput);
+  body.appendChild(notesField);
+
+  const btnRow = el("div", "btn-row");
+  const saveBtn = el("button", "btn btn-primary", isEdit ? "Save Changes" : "Add Entry");
+  btnRow.appendChild(saveBtn);
+  if (isEdit) {
+    const delBtn = el("button", "btn btn-danger", "Delete");
+    delBtn.addEventListener("click", async () => {
+      if (confirm(`Delete this entire record for ${loan.party_name}? This cannot be undone.`)) {
+        await db.deleteOtherCredit(loan.id);
+        closeSheet();
+        showToast("Entry deleted");
+        await renderLoans();
+      }
+    });
+    btnRow.appendChild(delBtn);
+  }
+  body.appendChild(btnRow);
+
+  saveBtn.addEventListener("click", async () => {
+    const name = nameInput.value.trim();
+    if (!name) { showToast("Enter the party's name"); return; }
+    if (isEdit) {
+      await db.updateOtherCredit(loan.id, { party_name: name, notes: notesInput.value.trim() });
+    } else {
+      const amount = parseFloat(amountInput.value);
+      if (isNaN(amount) || amount <= 0) { showToast("Enter a valid amount"); return; }
+      await db.addOtherCredit(name, dirSelect.value, amount, dateInput.value || todayStr(), notesInput.value.trim());
+    }
+    closeSheet();
+    showToast(isEdit ? "Entry updated" : "Entry added");
+    await renderLoans();
+  });
+
+  openSheet(isEdit ? "Edit Entry" : "New Credit Entry", body);
+}
+
+async function openLoanLedgerSheet(loan) {
+  const body = el("div");
+  const isTaken = loan.direction === "taken";
+
+  const balanceCard = el("div", "kpi-card");
+  balanceCard.appendChild(el("div", "kpi-label", isTaken ? "You owe them" : "They owe you"));
+  const balVal = el("div", "kpi-value", money(Math.abs(loan.balance)));
+  if (loan.balance > 0) balVal.classList.add("danger");
+  else if (loan.balance <= 0) balVal.classList.add("success");
+  balanceCard.appendChild(balVal);
+  body.appendChild(balanceCard);
+
+  const editBtn = el("button", "btn btn-secondary btn-block", "Edit Details");
+  editBtn.style.marginTop = "8px";
+  editBtn.addEventListener("click", () => openLoanSheet(loan));
+  body.appendChild(editBtn);
+
+  body.appendChild(el("div", "section-title", isTaken ? "Record a Repayment (to them)" : "Record a Repayment (from them)"));
+  const row = el("div", "field-row");
+  const amtField = el("div", "field");
+  amtField.appendChild(el("label", null, "Amount"));
+  const amtInput = el("input");
+  amtInput.type = "number";
+  amtInput.step = "0.01";
+  amtField.appendChild(amtInput);
+  row.appendChild(amtField);
+  const dateField = el("div", "field");
+  dateField.appendChild(el("label", null, "Date"));
+  const dateInput = el("input");
+  dateInput.type = "date";
+  dateInput.value = todayStr();
+  dateField.appendChild(dateInput);
+  row.appendChild(dateField);
+  body.appendChild(row);
+
+  const notesField = el("div", "field");
+  notesField.appendChild(el("label", null, "Notes (optional)"));
+  const notesInput = el("input");
+  notesInput.type = "text";
+  notesField.appendChild(notesInput);
+  body.appendChild(notesField);
+
+  const payBtn = el("button", "btn btn-primary btn-block", "Record Repayment");
+  payBtn.addEventListener("click", async () => {
+    const amount = parseFloat(amtInput.value);
+    if (isNaN(amount) || amount <= 0) { showToast("Enter a valid amount"); return; }
+    await db.addOtherCreditPayment(loan.id, amount, dateInput.value || todayStr(), notesInput.value.trim());
+    closeSheet();
+    showToast("Repayment recorded");
+    await renderLoans();
+  });
+  body.appendChild(payBtn);
+
+  body.appendChild(el("div", "section-title", "Ledger History"));
+  const ledger = await db.getOtherCreditLedger(loan.id);
+  const ledgerWrap = el("div");
+  if (!ledger.length) {
+    ledgerWrap.appendChild(el("div", "empty-state", "No activity yet."));
+  } else {
+    ledger.forEach((entry) => {
+      const sign = entry.entry_type === "charge" ? "+" : "−";
+      const item = el(
+        "div",
+        "history-item",
+        `${entry.date} — ${sign}${money(entry.amount)} <span class="note">(${entry.entry_type}${entry.notes ? ": " + entry.notes : ""})</span>`
+      );
+      ledgerWrap.appendChild(item);
+    });
+  }
+  body.appendChild(ledgerWrap);
+
+  openSheet(loan.party_name, body);
 }
 
 // ==================================================================

@@ -6,7 +6,7 @@
 */
 
 const DB_NAME = "retail_manager_db";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 function openDatabase() {
   return new Promise((resolve, reject) => {
@@ -55,6 +55,17 @@ function openDatabase() {
       if (!db.objectStoreNames.contains("credit_entries")) {
         const store = db.createObjectStore("credit_entries", { keyPath: "id", autoIncrement: true });
         store.createIndex("customer_id", "customer_id", { unique: false });
+        store.createIndex("date", "date", { unique: false });
+      }
+
+      if (!db.objectStoreNames.contains("other_credits")) {
+        const store = db.createObjectStore("other_credits", { keyPath: "id", autoIncrement: true });
+        store.createIndex("party_name", "party_name", { unique: false });
+      }
+
+      if (!db.objectStoreNames.contains("other_credit_entries")) {
+        const store = db.createObjectStore("other_credit_entries", { keyPath: "id", autoIncrement: true });
+        store.createIndex("other_credit_id", "other_credit_id", { unique: false });
         store.createIndex("date", "date", { unique: false });
       }
     };
@@ -388,6 +399,85 @@ class Database {
   }
 
   // ------------------------------------------------------------------
+  // Other Credit — loans/borrowings between the business and a third
+  // party, in either direction. Separate from customer sales credit.
+  //   direction "taken": the business borrowed money (business owes them)
+  //   direction "given": the business lent money out (they owe the business)
+  // ------------------------------------------------------------------
+  async addOtherCredit(party_name, direction, principal_amount, date, notes = "") {
+    date = date || new Date().toISOString().slice(0, 10);
+    const store = tx(this.idb, "other_credits", "readwrite").objectStore("other_credits");
+    const id = await reqToPromise(
+      store.add({ party_name, direction, notes, created_at: this.nowISO() })
+    );
+    await this._addOtherCreditEntry(id, "charge", principal_amount, date, notes || "Initial amount");
+    return id;
+  }
+
+  async updateOtherCredit(id, fields) {
+    const store = tx(this.idb, "other_credits", "readwrite").objectStore("other_credits");
+    const existing = await reqToPromise(store.get(id));
+    if (!existing) return;
+    await reqToPromise(store.put({ ...existing, ...fields }));
+  }
+
+  async deleteOtherCredit(id) {
+    const store = tx(this.idb, "other_credits", "readwrite").objectStore("other_credits");
+    await reqToPromise(store.delete(id));
+    const entryStore = tx(this.idb, "other_credit_entries", "readwrite").objectStore("other_credit_entries");
+    const entries = await cursorToArray(entryStore, (e) => e.other_credit_id === id);
+    for (const e of entries) await reqToPromise(entryStore.delete(e.id));
+  }
+
+  async _addOtherCreditEntry(other_credit_id, entryType, amount, date, notes) {
+    const store = tx(this.idb, "other_credit_entries", "readwrite").objectStore("other_credit_entries");
+    await reqToPromise(store.add({ other_credit_id, entry_type: entryType, amount, date, notes }));
+  }
+
+  async addOtherCreditPayment(other_credit_id, amount, date = null, notes = "") {
+    date = date || new Date().toISOString().slice(0, 10);
+    await this._addOtherCreditEntry(other_credit_id, "payment", amount, date, notes || "Repayment");
+  }
+
+  async getOtherCreditLedger(other_credit_id) {
+    const store = tx(this.idb, "other_credit_entries").objectStore("other_credit_entries");
+    const entries = await cursorToArray(store, (e) => e.other_credit_id === other_credit_id);
+    return entries.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.id - a.id));
+  }
+
+  async getOtherCreditsWithBalances() {
+    const store = tx(this.idb, "other_credits").objectStore("other_credits");
+    const records = await cursorToArray(store);
+    const entryStore = tx(this.idb, "other_credit_entries").objectStore("other_credit_entries");
+    const allEntries = await cursorToArray(entryStore);
+
+    return records
+      .map((r) => {
+        const entries = allEntries.filter((e) => e.other_credit_id === r.id);
+        let balance = 0;
+        let lastActivity = null;
+        for (const e of entries) {
+          balance += e.entry_type === "charge" ? e.amount : -e.amount;
+          if (!lastActivity || e.date > lastActivity) lastActivity = e.date;
+        }
+        return { ...r, balance, last_activity: lastActivity, entry_count: entries.length };
+      })
+      .sort((a, b) => a.party_name.localeCompare(b.party_name));
+  }
+
+  async getOtherCreditTotals() {
+    const records = await this.getOtherCreditsWithBalances();
+    let takenOutstanding = 0;
+    let givenOutstanding = 0;
+    for (const r of records) {
+      if (r.balance <= 0) continue;
+      if (r.direction === "taken") takenOutstanding += r.balance;
+      else givenOutstanding += r.balance;
+    }
+    return { takenOutstanding, givenOutstanding };
+  }
+
+  // ------------------------------------------------------------------
   // Expenses
   // ------------------------------------------------------------------
   async addExpense(name, amount, frequency = "monthly") {
@@ -481,7 +571,7 @@ class Database {
   // ------------------------------------------------------------------
   async exportAll() {
     const storeNames = ["categories", "products", "price_history", "transactions", "expenses",
-                         "settings", "customers", "credit_entries"];
+                         "settings", "customers", "credit_entries", "other_credits", "other_credit_entries"];
     const data = {};
     for (const name of storeNames) {
       const store = tx(this.idb, name).objectStore(name);
@@ -492,7 +582,7 @@ class Database {
 
   async importAll(data) {
     const storeNames = ["categories", "products", "price_history", "transactions", "expenses",
-                         "settings", "customers", "credit_entries"];
+                         "settings", "customers", "credit_entries", "other_credits", "other_credit_entries"];
     for (const name of storeNames) {
       if (!data[name]) continue;
       const store = tx(this.idb, name, "readwrite").objectStore(name);
