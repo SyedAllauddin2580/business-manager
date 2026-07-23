@@ -5,7 +5,7 @@
   IndexedDB (see js/db.js), not in this cache.
 */
 
-const CACHE_NAME = "retail-manager-cache-v9";
+const CACHE_NAME = "retail-manager-cache-v10";
 const APP_SHELL = [
   "./",
   "./index.html",

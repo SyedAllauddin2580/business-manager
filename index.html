@@ -179,14 +179,31 @@
     <div class="section-title"><span>Backup &amp; Restore</span><span class="rule"></span></div>
     <div class="note-box">
       Your data lives only on this device's browser storage. Export a backup file
-      regularly (e.g., weekly) and save it somewhere safe — Google Drive, email to
-      yourself, etc. — in case this phone or browser data is ever lost.
+      regularly and save it somewhere safe — Google Drive, email to yourself, etc. —
+      in case this phone or browser data is ever lost.
     </div>
     <div class="btn-row">
       <button class="btn btn-secondary" id="export-backup-btn">Export Backup</button>
       <button class="btn btn-secondary" id="import-backup-btn">Restore Backup</button>
     </div>
     <input type="file" id="import-file-input" accept="application/json" style="display:none;" />
+
+    <div class="field" style="margin-top:14px;">
+      <label style="display:flex; align-items:center; gap:6px; text-transform:none;">
+        <input type="checkbox" id="auto-backup-toggle" style="width:auto;" />
+        Enable automatic backups
+      </label>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Backup Every</label>
+        <select id="auto-backup-interval">
+          <option value="12">12 hours</option>
+          <option value="24" selected>24 hours</option>
+        </select>
+      </div>
+    </div>
+    <div class="meta" id="auto-backup-status" style="margin-bottom:12px;"></div>
   </div>
 
   <!-- ============ Bottom nav ============ -->

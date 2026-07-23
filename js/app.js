@@ -45,6 +45,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   wireSheet();
 
   await renderAll();
+  await checkAutoBackup();
 });
 
 async function renderAll() {
@@ -1585,6 +1586,55 @@ function openExpenseSheet() {
 // ==================================================================
 // REPORTS
 // ==================================================================
+/** Performs the actual backup file download and records when it happened. */
+async function performBackupExport(isAuto = false) {
+  const data = await db.exportAll();
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const stamp = new Date().toISOString().slice(0, 10);
+  a.href = url;
+  a.download = `retail-manager-backup-${stamp}${isAuto ? "-auto" : ""}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  await db.setSetting("last_backup_at", new Date().toISOString());
+  showToast(isAuto ? "Auto-backup saved to Downloads" : "Backup file downloaded");
+}
+
+/** Called once on app launch — auto-exports a backup if one is overdue and auto-backup is enabled. */
+async function checkAutoBackup() {
+  const enabled = (await db.getSetting("auto_backup_enabled", "true")) === "true";
+  if (!enabled) return;
+  const intervalHours = parseFloat(await db.getSetting("auto_backup_interval_hours", "24"));
+  const lastBackupAt = await db.getSetting("last_backup_at", null);
+  const hoursSince = lastBackupAt ? (Date.now() - new Date(lastBackupAt).getTime()) / 3600000 : Infinity;
+  if (hoursSince >= intervalHours) {
+    try {
+      await performBackupExport(true);
+    } catch (err) {
+      // If the browser blocks a non-gesture download, fail quietly — the
+      // manual Export button still works, and we'll try again next launch.
+    }
+  }
+}
+
+async function renderAutoBackupStatus() {
+  const lastBackupAt = await db.getSetting("last_backup_at", null);
+  const statusEl = document.getElementById("auto-backup-status");
+  if (!lastBackupAt) {
+    statusEl.textContent = "No backup taken yet on this device.";
+    return;
+  }
+  const hoursAgo = (Date.now() - new Date(lastBackupAt).getTime()) / 3600000;
+  const when = new Date(lastBackupAt).toLocaleString();
+  const agoText = hoursAgo < 1 ? "less than an hour ago" :
+                   hoursAgo < 48 ? `${Math.floor(hoursAgo)}h ago` :
+                   `${Math.floor(hoursAgo / 24)}d ago`;
+  statusEl.textContent = `Last backup: ${when} (${agoText})`;
+}
+
 function wireReports() {
   document.querySelectorAll("#report-range-chips .chip").forEach((chip) => {
     chip.addEventListener("click", async () => {
@@ -1596,18 +1646,8 @@ function wireReports() {
   });
 
   document.getElementById("export-backup-btn").addEventListener("click", async () => {
-    const data = await db.exportAll();
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    const stamp = new Date().toISOString().slice(0, 10);
-    a.href = url;
-    a.download = `retail-manager-backup-${stamp}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-    showToast("Backup file downloaded");
+    await performBackupExport(false);
+    await renderAutoBackupStatus();
   });
 
   document.getElementById("import-backup-btn").addEventListener("click", () => {
@@ -1631,6 +1671,23 @@ function wireReports() {
     }
     e.target.value = "";
   });
+
+  const autoToggle = document.getElementById("auto-backup-toggle");
+  const intervalSelect = document.getElementById("auto-backup-interval");
+
+  db.getSetting("auto_backup_enabled", "true").then((v) => (autoToggle.checked = v === "true"));
+  db.getSetting("auto_backup_interval_hours", "24").then((v) => (intervalSelect.value = v));
+
+  autoToggle.addEventListener("change", async () => {
+    await db.setSetting("auto_backup_enabled", autoToggle.checked ? "true" : "false");
+    showToast(autoToggle.checked ? "Automatic backups enabled" : "Automatic backups disabled");
+  });
+  intervalSelect.addEventListener("change", async () => {
+    await db.setSetting("auto_backup_interval_hours", intervalSelect.value);
+    showToast(`Will back up every ${intervalSelect.value} hours`);
+  });
+
+  renderAutoBackupStatus();
 }
 
 async function renderReports() {
