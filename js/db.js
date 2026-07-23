@@ -293,6 +293,80 @@ class Database {
     await reqToPromise(store.delete(id));
   }
 
+  /**
+   * Edits an existing transaction in place, correctly reversing the stock
+   * effect of the OLD values and applying the stock effect of the NEW
+   * values — including handling a change of product, type, or quantity.
+   * fields may include any of: product_id, ttype, quantity, unit_price,
+   * tdate, notes. Only the keys provided are changed.
+   *
+   * Note: this does not touch any linked credit-sale ledger entry (there
+   * is no stored link between a transaction and a credit charge) — if the
+   * original sale was on credit, adjust the customer's ledger separately.
+   */
+  async updateTransaction(id, fields) {
+    // Read with its own short-lived transaction — IndexedDB transactions
+    // auto-commit once you await unrelated operations on another store,
+    // so we must NOT hold this transaction open across the product
+    // updates below and reuse it later for the final write.
+    const readStore = tx(this.idb, "transactions").objectStore("transactions");
+    const existing = await reqToPromise(readStore.get(id));
+    if (!existing) return;
+
+    const oldProductId = existing.product_id;
+    const oldType = existing.ttype;
+    const oldQty = existing.quantity;
+
+    const newProductId = fields.product_id !== undefined ? fields.product_id : oldProductId;
+    const newType = fields.ttype !== undefined ? fields.ttype : oldType;
+    const newQty = fields.quantity !== undefined ? fields.quantity : oldQty;
+    const newPrice = fields.unit_price !== undefined ? fields.unit_price : existing.unit_price;
+
+    const productStore = tx(this.idb, "products", "readwrite").objectStore("products");
+
+    if (oldProductId === newProductId) {
+      const product = await reqToPromise(productStore.get(oldProductId));
+      if (product) {
+        let qty = product.stock_qty;
+        qty += oldType === "sale" ? oldQty : -oldQty; // reverse old effect
+        qty += newType === "sale" ? -newQty : newQty; // apply new effect
+        product.stock_qty = qty;
+        product.updated_at = this.nowISO();
+        await reqToPromise(productStore.put(product));
+      }
+    } else {
+      const oldProductStore = tx(this.idb, "products", "readwrite").objectStore("products");
+      const oldProduct = await reqToPromise(oldProductStore.get(oldProductId));
+      if (oldProduct) {
+        oldProduct.stock_qty += oldType === "sale" ? oldQty : -oldQty;
+        oldProduct.updated_at = this.nowISO();
+        await reqToPromise(oldProductStore.put(oldProduct));
+      }
+      const newProductStore = tx(this.idb, "products", "readwrite").objectStore("products");
+      const newProduct = await reqToPromise(newProductStore.get(newProductId));
+      if (newProduct) {
+        newProduct.stock_qty += newType === "sale" ? -newQty : newQty;
+        newProduct.updated_at = this.nowISO();
+        await reqToPromise(newProductStore.put(newProduct));
+      }
+    }
+
+    const updated = {
+      ...existing,
+      product_id: newProductId,
+      ttype: newType,
+      quantity: newQty,
+      unit_price: newPrice,
+      total: newQty * newPrice,
+      tdate: fields.tdate !== undefined ? fields.tdate : existing.tdate,
+      notes: fields.notes !== undefined ? fields.notes : existing.notes,
+    };
+    // Fresh transaction for the write — the original readStore transaction
+    // is long since auto-committed by this point.
+    const writeStore = tx(this.idb, "transactions", "readwrite").objectStore("transactions");
+    await reqToPromise(writeStore.put(updated));
+  }
+
   // ------------------------------------------------------------------
   // Customers & Credit (buy-now-pay-later dues)
   // ------------------------------------------------------------------

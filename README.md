@@ -66,6 +66,77 @@ to your GitHub repo (or re-drag to Netlify). The service worker checks
 for updates automatically the next time you open the app while online,
 and refreshes its cache in the background.
 
+## Backlog / Future Ideas
+
+Discussed and deliberately parked for later — not built yet, kept here so
+nothing gets lost between sessions.
+
+### Sales — Returns & Discounts
+- **Discounts**: currently you can already sell below list price by just
+  typing a lower Unit Price at time of sale — this works today. A proper
+  discount feature would add a separate "Discount %/₹" field so the
+  ledger records *what the discount was*, not just a lower price, making
+  "how much did I give away in discounts this month" its own reportable
+  number. Low effort.
+- **Returns**: a customer returning goods needs stock added back AND
+  turnover/profit reduced for that sale — right now nothing reverses a
+  sale's financial impact once recorded. Also needs to handle the case
+  where the original sale was on credit (reduce/cancel that due). Touches
+  Dashboard, Reports, Catalog, and Credit simultaneously — worth designing
+  properly in its own session rather than bolting on. Medium-large effort.
+
+### Purchases — Supplier Tracking
+- Tag each purchase with who you bought it from (reusing the same
+  autocomplete-and-auto-create pattern already built for credit-sale
+  customers).
+- Report: total spent per supplier, and average price paid per supplier
+  for the same product (useful for negotiating / choosing who to reorder
+  from).
+- Note: money owed *to* a supplier for goods bought on credit is already
+  covered by Credit tab → "Other Credit → I Owe (Taken)" — this backlog
+  item is purely about labeling/reporting, not dues tracking. Low effort,
+  no risk to existing turnover/profit math.
+
+### Other ideas raised along the way (not yet scoped in detail)
+- **Adjustment reason field** — dropdown (Damaged / Theft / Recount /
+  Personal Use / Other) instead of free-text notes, to eventually report
+  shrinkage by cause.
+- **Search on the Transactions ledger** — filter by product name, not
+  just date/type.
+- **Undo on delete** — brief "Undone" option after deleting a transaction
+  or product, instead of a plain confirm dialog.
+- **Link credit sales to their transaction** — right now editing/deleting
+  a transaction that was originally a credit sale doesn't update the
+  linked customer ledger entry, because there's no stored link between
+  them. Fixing this would make edits/deletes fully consistent everywhere.
+- **Stale inventory alert** — flag products not sold in 90+ days.
+- **Call / WhatsApp buttons** on a customer's ledger sheet (`tel:` and
+  `wa.me` links — cheap to add, no library needed).
+- **Capital Health gauge** — a simple Excellent/Good/Average/Needs
+  Attention indicator based on capital growth %, once we agree on
+  thresholds.
+- **PDF / Excel export** of reports (beyond the current full-JSON
+  backup) — would need a bundled library, adds to app size.
+- **Barcode scanning** — feasible cheaply using Chrome's native
+  `BarcodeDetector` API (no external library needed) rather than a heavy
+  barcode-decoding package.
+- **GST / Tax support** — real feature, not a settings toggle: tax rates
+  per product, inclusive/exclusive pricing, tax breakdown on record —
+  meaningfully more work than anything above.
+- **Multi-user / staff accounts** — PIN-per-staff-member, activity log of
+  who recorded what.
+- **Settings section** (business name, currency symbol, dark mode) —
+  parked until there's enough to actually bundle; currently Backup/Restore
+  lives in the Reports tab.
+
+### Known architectural limit (not really "backlog," just a fact)
+This app is deliberately offline-only, single-device, zero-server, zero
+cost. That's why it can be free and work with no setup. **True
+multi-device sync is a different, much bigger project** — it would need
+a real backend server and accounts, which conflicts with the offline/
+zero-cost design. Worth knowing this going in rather than expecting it
+to appear as an incremental feature.
+
 ## Folder structure
 
 ```

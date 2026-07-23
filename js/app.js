@@ -1129,16 +1129,120 @@ async function renderTransactions() {
     main.appendChild(el("div", "meta", `${t.tdate} · Qty ${t.quantity}${t.notes ? " · " + t.notes : ""}`));
     row.appendChild(main);
     row.appendChild(el("div", "value", money(t.total)));
-    row.addEventListener("click", async () => {
-      if (confirm(`Delete this ${t.ttype} entry? Stock will not be auto-reverted.`)) {
-        await db.deleteTransaction(t.id);
-        showToast("Transaction deleted");
-        await renderTransactions();
-        await renderDashboard();
-      }
-    });
+    row.addEventListener("click", () => openEditTransactionSheet(t));
     list.appendChild(row);
   });
+}
+
+async function openEditTransactionSheet(t) {
+  const products = await db.getProducts();
+  const body = el("div");
+
+  const prodField = el("div", "field");
+  prodField.appendChild(el("label", null, "Product"));
+  const prodSelect = el("select");
+  products.forEach((p) => {
+    const opt = el("option", null, p.name);
+    opt.value = p.id;
+    if (p.id === t.product_id) opt.selected = true;
+    prodSelect.appendChild(opt);
+  });
+  prodField.appendChild(prodSelect);
+  body.appendChild(prodField);
+
+  const row1 = el("div", "field-row");
+  const typeField = el("div", "field");
+  typeField.appendChild(el("label", null, "Type"));
+  const typeSelect = el("select");
+  ["sale", "purchase", "adjustment"].forEach((tt) => {
+    const opt = el("option", null, tt);
+    opt.value = tt;
+    if (tt === t.ttype) opt.selected = true;
+    typeSelect.appendChild(opt);
+  });
+  typeField.appendChild(typeSelect);
+  row1.appendChild(typeField);
+
+  const qtyField = el("div", "field");
+  qtyField.appendChild(el("label", null, "Quantity"));
+  const qtyInput = el("input");
+  qtyInput.type = "number";
+  qtyInput.value = t.quantity;
+  qtyField.appendChild(qtyInput);
+  row1.appendChild(qtyField);
+  body.appendChild(row1);
+
+  const row2 = el("div", "field-row");
+  const priceField = el("div", "field");
+  priceField.appendChild(el("label", null, "Unit Price"));
+  const priceInput = el("input");
+  priceInput.type = "number";
+  priceInput.step = "0.01";
+  priceInput.value = t.unit_price;
+  priceField.appendChild(priceInput);
+  row2.appendChild(priceField);
+
+  const dateField = el("div", "field");
+  dateField.appendChild(el("label", null, "Date"));
+  const dateInput = el("input");
+  dateInput.type = "date";
+  dateInput.value = t.tdate;
+  dateField.appendChild(dateInput);
+  row2.appendChild(dateField);
+  body.appendChild(row2);
+
+  const notesField = el("div", "field");
+  notesField.appendChild(el("label", null, "Notes"));
+  const notesInput = el("input");
+  notesInput.type = "text";
+  notesInput.value = t.notes || "";
+  notesField.appendChild(notesInput);
+  body.appendChild(notesField);
+
+  const note = el("div", "note-box",
+    "Editing automatically corrects stock for you (reverses the old quantity effect, applies the new one). " +
+    "Note: if this was a credit sale, this won't update the customer's ledger in the Credit tab — adjust that separately if needed."
+  );
+  body.appendChild(note);
+
+  const btnRow = el("div", "btn-row");
+  const saveBtn = el("button", "btn btn-primary", "Save Changes");
+  const delBtn = el("button", "btn btn-danger", "Delete");
+  btnRow.appendChild(saveBtn);
+  btnRow.appendChild(delBtn);
+  body.appendChild(btnRow);
+
+  delBtn.addEventListener("click", async () => {
+    if (confirm(`Delete this ${t.ttype} entry? Stock will not be auto-reverted.`)) {
+      await db.deleteTransaction(t.id);
+      closeSheet();
+      showToast("Transaction deleted");
+      await renderTransactions();
+      await renderCatalog();
+      await renderDashboard();
+    }
+  });
+
+  saveBtn.addEventListener("click", async () => {
+    const qty = parseFloat(qtyInput.value);
+    const price = parseFloat(priceInput.value);
+    if (isNaN(qty) || isNaN(price)) { showToast("Quantity and price must be numeric"); return; }
+    await db.updateTransaction(t.id, {
+      product_id: parseInt(prodSelect.value, 10),
+      ttype: typeSelect.value,
+      quantity: qty,
+      unit_price: price,
+      tdate: dateInput.value || t.tdate,
+      notes: notesInput.value.trim(),
+    });
+    closeSheet();
+    showToast("Transaction updated");
+    await renderTransactions();
+    await renderCatalog();
+    await renderDashboard();
+  });
+
+  openSheet("Edit Transaction", body);
 }
 
 async function openTransactionSheet() {
@@ -1638,14 +1742,22 @@ async function renderCapital() {
 
   const inv = await db.inventoryValue();
   const stockValue = inv.cost_value;
-  const currentCapital = stockValue + cashInHand;
+  const receivables = await db.getTotalOutstandingDues();
+  const loanTotals = await db.getOtherCreditTotals();
+  const loansGiven = loanTotals.givenOutstanding;
+  const loansTaken = loanTotals.takenOutstanding;
+
+  const currentCapital = stockValue + cashInHand + receivables + loansGiven - loansTaken;
   const capitalChange = currentCapital - initialCapital;
 
   const kpiGrid = document.getElementById("capital-kpis");
   kpiGrid.innerHTML = "";
   const kpis = [
-    ["Stock Value (at cost)", money(stockValue)],
+    ["Inventory Value", money(stockValue)],
     ["Cash in Hand", money(cashInHand)],
+    ["Customer Receivables", money(receivables)],
+    ["Loans Given (outstanding)", money(loansGiven)],
+    ["Loans Taken (outstanding)", "− " + money(loansTaken)],
     ["Current Capital", money(currentCapital)],
     ["Change vs Initial", (capitalChange >= 0 ? "+" : "") + money(capitalChange)],
   ];
@@ -1653,7 +1765,8 @@ async function renderCapital() {
     const card = el("div", "kpi-card");
     card.appendChild(el("div", "kpi-label", label));
     const valEl = el("div", "kpi-value", value);
-    if (i === 3) valEl.classList.add(capitalChange >= 0 ? "success" : "danger");
+    if (label === "Loans Taken (outstanding)") valEl.classList.add("danger");
+    if (label === "Change vs Initial") valEl.classList.add(capitalChange >= 0 ? "success" : "danger");
     card.appendChild(valEl);
     kpiGrid.appendChild(card);
   });
