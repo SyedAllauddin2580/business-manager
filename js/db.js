@@ -6,7 +6,7 @@
 */
 
 const DB_NAME = "retail_manager_db";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 function openDatabase() {
   return new Promise((resolve, reject) => {
@@ -67,6 +67,31 @@ function openDatabase() {
         const store = db.createObjectStore("other_credit_entries", { keyPath: "id", autoIncrement: true });
         store.createIndex("other_credit_id", "other_credit_id", { unique: false });
         store.createIndex("date", "date", { unique: false });
+      }
+
+      if (!db.objectStoreNames.contains("deals")) {
+        db.createObjectStore("deals", { keyPath: "id", autoIncrement: true });
+      }
+
+      if (!db.objectStoreNames.contains("deal_partners")) {
+        const store = db.createObjectStore("deal_partners", { keyPath: "id", autoIncrement: true });
+        store.createIndex("deal_id", "deal_id", { unique: false });
+      }
+
+      if (!db.objectStoreNames.contains("deal_expenses")) {
+        const store = db.createObjectStore("deal_expenses", { keyPath: "id", autoIncrement: true });
+        store.createIndex("deal_id", "deal_id", { unique: false });
+      }
+
+      if (!db.objectStoreNames.contains("deal_items")) {
+        const store = db.createObjectStore("deal_items", { keyPath: "id", autoIncrement: true });
+        store.createIndex("deal_id", "deal_id", { unique: false });
+      }
+
+      if (!db.objectStoreNames.contains("deal_sales")) {
+        const store = db.createObjectStore("deal_sales", { keyPath: "id", autoIncrement: true });
+        store.createIndex("deal_id", "deal_id", { unique: false });
+        store.createIndex("deal_item_id", "deal_item_id", { unique: false });
       }
     };
 
@@ -552,6 +577,220 @@ class Database {
   }
 
   // ------------------------------------------------------------------
+  // Deals & Partnerships — a completely self-contained "side income"
+  // system. Deliberately separate from Catalog/Transactions/Capital/
+  // Credit: a deal has its own items, its own sales, and its own
+  // expenses, so none of this ever affects the main shop's numbers.
+  // ------------------------------------------------------------------
+  async addDeal(name, notes = "") {
+    const store = tx(this.idb, "deals", "readwrite").objectStore("deals");
+    return reqToPromise(store.add({ name, notes, status: "open", created_at: this.nowISO() }));
+  }
+
+  async updateDeal(id, fields) {
+    const store = tx(this.idb, "deals", "readwrite").objectStore("deals");
+    const existing = await reqToPromise(store.get(id));
+    if (!existing) return;
+    await reqToPromise(store.put({ ...existing, ...fields }));
+  }
+
+  async getDeals() {
+    const store = tx(this.idb, "deals").objectStore("deals");
+    const all = await cursorToArray(store);
+    return all.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  }
+
+  async getDeal(id) {
+    const store = tx(this.idb, "deals").objectStore("deals");
+    return reqToPromise(store.get(id));
+  }
+
+  async deleteDeal(id) {
+    const dealStore = tx(this.idb, "deals", "readwrite").objectStore("deals");
+    await reqToPromise(dealStore.delete(id));
+
+    const partnerStore = tx(this.idb, "deal_partners", "readwrite").objectStore("deal_partners");
+    const partners = await cursorToArray(partnerStore, (p) => p.deal_id === id);
+    for (const p of partners) await reqToPromise(partnerStore.delete(p.id));
+
+    const expenseStore = tx(this.idb, "deal_expenses", "readwrite").objectStore("deal_expenses");
+    const expenses = await cursorToArray(expenseStore, (e) => e.deal_id === id);
+    for (const e of expenses) await reqToPromise(expenseStore.delete(e.id));
+
+    const saleStore = tx(this.idb, "deal_sales", "readwrite").objectStore("deal_sales");
+    const sales = await cursorToArray(saleStore, (s) => s.deal_id === id);
+    for (const s of sales) await reqToPromise(saleStore.delete(s.id));
+
+    const itemStore = tx(this.idb, "deal_items", "readwrite").objectStore("deal_items");
+    const items = await cursorToArray(itemStore, (i) => i.deal_id === id);
+    for (const i of items) await reqToPromise(itemStore.delete(i.id));
+  }
+
+  // --- Partners ---
+  async addDealPartner(deal_id, name, investment_amount, profit_share_pct = null, notes = "") {
+    const store = tx(this.idb, "deal_partners", "readwrite").objectStore("deal_partners");
+    return reqToPromise(store.add({
+      deal_id, name, investment_amount, profit_share_pct, paid: false, paid_at: null, notes,
+      created_at: this.nowISO(),
+    }));
+  }
+
+  async updateDealPartner(id, fields) {
+    const store = tx(this.idb, "deal_partners", "readwrite").objectStore("deal_partners");
+    const existing = await reqToPromise(store.get(id));
+    if (!existing) return;
+    await reqToPromise(store.put({ ...existing, ...fields }));
+  }
+
+  async setDealPartnerPaid(id, paid) {
+    await this.updateDealPartner(id, { paid, paid_at: paid ? this.nowISO() : null });
+  }
+
+  async deleteDealPartner(id) {
+    const store = tx(this.idb, "deal_partners", "readwrite").objectStore("deal_partners");
+    await reqToPromise(store.delete(id));
+  }
+
+  async getDealPartners(deal_id) {
+    const store = tx(this.idb, "deal_partners").objectStore("deal_partners");
+    const all = await cursorToArray(store, (p) => p.deal_id === deal_id);
+    return all.sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
+  }
+
+  // --- Expenses ---
+  async addDealExpense(deal_id, description, amount, date, notes = "") {
+    const store = tx(this.idb, "deal_expenses", "readwrite").objectStore("deal_expenses");
+    return reqToPromise(store.add({ deal_id, description, amount, date, notes }));
+  }
+
+  async deleteDealExpense(id) {
+    const store = tx(this.idb, "deal_expenses", "readwrite").objectStore("deal_expenses");
+    await reqToPromise(store.delete(id));
+  }
+
+  async getDealExpenses(deal_id) {
+    const store = tx(this.idb, "deal_expenses").objectStore("deal_expenses");
+    const all = await cursorToArray(store, (e) => e.deal_id === deal_id);
+    return all.sort((a, b) => (a.date < b.date ? 1 : -1));
+  }
+
+  // --- Items (deal-scoped goods, entirely separate from the main Catalog) ---
+  async addDealItem(deal_id, name, purchase_price, selling_price, qty_purchased, notes = "") {
+    const store = tx(this.idb, "deal_items", "readwrite").objectStore("deal_items");
+    return reqToPromise(store.add({
+      deal_id, name, purchase_price, selling_price, qty_purchased, notes, created_at: this.nowISO(),
+    }));
+  }
+
+  async updateDealItem(id, fields) {
+    const store = tx(this.idb, "deal_items", "readwrite").objectStore("deal_items");
+    const existing = await reqToPromise(store.get(id));
+    if (!existing) return;
+    await reqToPromise(store.put({ ...existing, ...fields }));
+  }
+
+  async deleteDealItem(id) {
+    const itemStore = tx(this.idb, "deal_items", "readwrite").objectStore("deal_items");
+    await reqToPromise(itemStore.delete(id));
+    const saleStore = tx(this.idb, "deal_sales", "readwrite").objectStore("deal_sales");
+    const sales = await cursorToArray(saleStore, (s) => s.deal_item_id === id);
+    for (const s of sales) await reqToPromise(saleStore.delete(s.id));
+  }
+
+  async getDealItems(deal_id) {
+    const store = tx(this.idb, "deal_items").objectStore("deal_items");
+    const all = await cursorToArray(store, (i) => i.deal_id === deal_id);
+    return all.sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
+  }
+
+  async getDealItem(id) {
+    const store = tx(this.idb, "deal_items").objectStore("deal_items");
+    return reqToPromise(store.get(id));
+  }
+
+  // --- Sales (deal-scoped, entirely separate from the main Transactions ledger) ---
+  async addDealSale(deal_id, deal_item_id, quantity, unit_price, date, notes = "") {
+    const store = tx(this.idb, "deal_sales", "readwrite").objectStore("deal_sales");
+    const total = quantity * unit_price;
+    await reqToPromise(store.add({ deal_id, deal_item_id, quantity, unit_price, total, date, notes }));
+  }
+
+  async deleteDealSale(id) {
+    const store = tx(this.idb, "deal_sales", "readwrite").objectStore("deal_sales");
+    await reqToPromise(store.delete(id));
+  }
+
+  async getDealSales(deal_id) {
+    const store = tx(this.idb, "deal_sales").objectStore("deal_sales");
+    const all = await cursorToArray(store, (s) => s.deal_id === deal_id);
+    return all.sort((a, b) => (a.date < b.date ? 1 : -1));
+  }
+
+  async getItemRemainingQty(deal_item_id) {
+    const item = await this.getDealItem(deal_item_id);
+    if (!item) return 0;
+    const store = tx(this.idb, "deal_sales").objectStore("deal_sales");
+    const sales = await cursorToArray(store, (s) => s.deal_item_id === deal_item_id);
+    const sold = sales.reduce((sum, s) => sum + s.quantity, 0);
+    return item.qty_purchased - sold;
+  }
+
+  /**
+   * Full profit & loss + partner payout breakdown for a deal.
+   * Profit split: partners with an explicit profit_share_pct get exactly
+   * that percentage; the remaining percentage (100% minus whatever's
+   * explicitly allocated) is split among the rest proportional to their
+   * investment amount. Flags overAllocated if explicit percentages alone
+   * already exceed 100%.
+   */
+  async computeDealPnL(deal_id) {
+    const partners = await this.getDealPartners(deal_id);
+    const expenses = await this.getDealExpenses(deal_id);
+    const items = await this.getDealItems(deal_id);
+    const sales = await this.getDealSales(deal_id);
+
+    const totalInvestment = partners.reduce((s, p) => s + p.investment_amount, 0);
+    const expensesTotal = expenses.reduce((s, e) => s + e.amount, 0);
+    const purchaseCost = items.reduce((s, i) => s + i.purchase_price * i.qty_purchased, 0);
+
+    const costLookup = Object.fromEntries(items.map((i) => [i.id, i.purchase_price]));
+    let revenue = 0;
+    let cogs = 0;
+    for (const s of sales) {
+      revenue += s.total;
+      cogs += (costLookup[s.deal_item_id] || 0) * s.quantity;
+    }
+
+    const netProfit = revenue - cogs - expensesTotal;
+
+    const customPartners = partners.filter((p) => p.profit_share_pct !== null && p.profit_share_pct !== undefined);
+    const autoPartners = partners.filter((p) => p.profit_share_pct === null || p.profit_share_pct === undefined);
+    const sumCustomPct = customPartners.reduce((s, p) => s + p.profit_share_pct, 0);
+    const remainingPct = 100 - sumCustomPct;
+    const sumAutoInvestment = autoPartners.reduce((s, p) => s + p.investment_amount, 0);
+    const overAllocated = sumCustomPct > 100;
+
+    const partnersWithShares = partners.map((p) => {
+      let sharePct;
+      const hasCustom = p.profit_share_pct !== null && p.profit_share_pct !== undefined;
+      if (hasCustom) {
+        sharePct = p.profit_share_pct;
+      } else if (sumAutoInvestment > 0 && remainingPct > 0) {
+        sharePct = (p.investment_amount / sumAutoInvestment) * remainingPct;
+      } else {
+        sharePct = 0;
+      }
+      const shareAmount = netProfit * (sharePct / 100);
+      return { ...p, sharePct, shareAmount, hasCustomPct: hasCustom };
+    });
+
+    return {
+      totalInvestment, purchaseCost, expensesTotal, revenue, cogs, netProfit,
+      partners: partnersWithShares, overAllocated,
+    };
+  }
+
+  // ------------------------------------------------------------------
   // Expenses
   // ------------------------------------------------------------------
   async addExpense(name, amount, frequency = "monthly") {
@@ -645,7 +884,8 @@ class Database {
   // ------------------------------------------------------------------
   async exportAll() {
     const storeNames = ["categories", "products", "price_history", "transactions", "expenses",
-                         "settings", "customers", "credit_entries", "other_credits", "other_credit_entries"];
+                         "settings", "customers", "credit_entries", "other_credits", "other_credit_entries",
+                         "deals", "deal_partners", "deal_expenses", "deal_items", "deal_sales"];
     const data = {};
     for (const name of storeNames) {
       const store = tx(this.idb, name).objectStore(name);
@@ -656,7 +896,8 @@ class Database {
 
   async importAll(data) {
     const storeNames = ["categories", "products", "price_history", "transactions", "expenses",
-                         "settings", "customers", "credit_entries", "other_credits", "other_credit_entries"];
+                         "settings", "customers", "credit_entries", "other_credits", "other_credit_entries",
+                         "deals", "deal_partners", "deal_expenses", "deal_items", "deal_sales"];
     for (const name of storeNames) {
       if (!data[name]) continue;
       const store = tx(this.idb, name, "readwrite").objectStore(name);

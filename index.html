@@ -130,6 +130,21 @@
     <div id="rec-all-list"></div>
   </div>
 
+  <!-- ============ DEALS & PARTNERSHIPS ============ -->
+  <div class="tab-panel" id="panel-deals">
+    <div class="note-box">
+      Track group-buy deals where multiple people (including you) pool money to buy
+      goods and split the profit. Fully separate from your shop's own Capital, Credit,
+      and Catalog — this is tracked as its own side income.
+    </div>
+    <div class="chip-row" id="deal-filter-chips">
+      <div class="chip active" data-filter="open">Open</div>
+      <div class="chip" data-filter="settled">Settled</div>
+      <div class="chip" data-filter="all">All</div>
+    </div>
+    <div id="deal-list"></div>
+  </div>
+
   <!-- ============ CAPITAL ============ -->
   <div class="tab-panel" id="panel-capital">
     <div class="section-title"><span>Initial Capital</span><span class="rule"></span></div>
@@ -231,6 +246,10 @@
     <button class="tab-btn" data-tab="expenses">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 9.5c0-1.5 1.3-2.5 3-2.5s3 1 3 2.2c0 2.6-6 1.5-6 4.3 0 1.3 1.3 2.5 3 2.5s3-1 3-2.5"/></svg>
       <span>Expenses</span>
+    </button>
+    <button class="tab-btn" data-tab="deals">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="5"/><circle cx="16" cy="16" r="5"/><path d="M8 13v3a2 2 0 002 2h1"/></svg>
+      <span>Deals</span>
     </button>
     <button class="tab-btn" data-tab="capital">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"/><path d="M5 21V10l5-5 5 5v11"/><path d="M13 21v-7h4v7"/><path d="M9 21v-4h2v4"/></svg>

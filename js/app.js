@@ -17,6 +17,7 @@ let state = {
   txnTo: "",
   creditFilter: "due",
   loanFilter: "all",
+  dealFilter: "open",
 };
 
 // ------------------------------------------------------------------
@@ -37,6 +38,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   wirePricing();
   wireCredit();
   wireLoans();
+  wireDeals();
   wireTransactions();
   wireExpenses();
   wireReports();
@@ -54,6 +56,7 @@ async function renderAll() {
   await renderPricing();
   await renderCredit();
   await renderLoans();
+  await renderDeals();
   await renderTransactions();
   await renderExpenses();
   await renderReports();
@@ -116,6 +119,7 @@ function wireFab() {
     if (state.activeTab === "catalog") openProductSheet(null);
     else if (state.activeTab === "pricing") showToast("Tap a product to update its price");
     else if (state.activeTab === "credit") openRecordPaymentSheet();
+    else if (state.activeTab === "deals") openNewDealSheet();
     else if (state.activeTab === "transactions") openTransactionSheet();
     else if (state.activeTab === "expenses") openExpenseSheet();
   });
@@ -1836,4 +1840,561 @@ async function renderCapital() {
   } else {
     warning.style.display = "none";
   }
+}
+
+// ==================================================================
+// DEALS & PARTNERSHIPS (fully separate from Capital/Credit/Catalog)
+// ==================================================================
+function wireDeals() {
+  document.querySelectorAll("#deal-filter-chips .chip[data-filter]").forEach((chip) => {
+    chip.addEventListener("click", async () => {
+      document.querySelectorAll("#deal-filter-chips .chip[data-filter]").forEach((c) => c.classList.remove("active"));
+      chip.classList.add("active");
+      state.dealFilter = chip.dataset.filter;
+      await renderDeals();
+    });
+  });
+}
+
+async function renderDeals() {
+  const deals = await db.getDeals();
+  let filtered = deals;
+  if (state.dealFilter === "open") filtered = deals.filter((d) => d.status === "open");
+  else if (state.dealFilter === "settled") filtered = deals.filter((d) => d.status === "settled");
+
+  const list = document.getElementById("deal-list");
+  list.innerHTML = "";
+  if (!filtered.length) {
+    list.appendChild(el("div", "empty-state", "No deals yet. Tap + to start one."));
+    return;
+  }
+
+  for (const d of filtered) {
+    const pnl = await db.computeDealPnL(d.id);
+    const row = el("div", "list-row");
+    const main = el("div", "main");
+    const titleWrap = el("div", "title");
+    titleWrap.textContent = d.name + " ";
+    titleWrap.appendChild(el("span", "badge " + (d.status === "open" ? "sale" : "credit-ok"), d.status));
+    main.appendChild(titleWrap);
+    main.appendChild(el("div", "meta", `${(await db.getDealPartners(d.id)).length} partner(s) · Net Profit so far: ${money(pnl.netProfit)}`));
+    row.appendChild(main);
+    const valClass = pnl.netProfit >= 0 ? "value success" : "value danger";
+    row.appendChild(el("div", valClass, money(pnl.netProfit)));
+    row.addEventListener("click", () => openDealDetailSheet(d));
+    list.appendChild(row);
+  }
+}
+
+function openNewDealSheet() {
+  const body = el("div");
+  const nameField = el("div", "field");
+  nameField.appendChild(el("label", null, "Deal Name"));
+  const nameInput = el("input");
+  nameInput.type = "text";
+  nameInput.placeholder = "e.g. Diwali Gift Boxes";
+  nameField.appendChild(nameInput);
+  body.appendChild(nameField);
+
+  const notesField = el("div", "field");
+  notesField.appendChild(el("label", null, "Notes (optional)"));
+  const notesInput = el("input");
+  notesInput.type = "text";
+  notesField.appendChild(notesInput);
+  body.appendChild(notesField);
+
+  const saveBtn = el("button", "btn btn-primary btn-block", "Create Deal");
+  saveBtn.addEventListener("click", async () => {
+    const name = nameInput.value.trim();
+    if (!name) { showToast("Enter a deal name"); return; }
+    const id = await db.addDeal(name, notesInput.value.trim());
+    showToast("Deal created — now add partners and items");
+    await renderDeals();
+    const deal = await db.getDeal(id);
+    openDealDetailSheet(deal);
+  });
+  body.appendChild(saveBtn);
+
+  openSheet("New Deal", body);
+}
+
+async function openDealDetailSheet(deal) {
+  deal = await db.getDeal(deal.id); // always fetch fresh
+  const body = el("div");
+
+  // --- Name/notes (inline editable) + status ---
+  const nameField = el("div", "field");
+  nameField.appendChild(el("label", null, "Deal Name"));
+  const nameInput = el("input");
+  nameInput.type = "text";
+  nameInput.value = deal.name;
+  nameField.appendChild(nameInput);
+  body.appendChild(nameField);
+
+  const notesField = el("div", "field");
+  notesField.appendChild(el("label", null, "Notes"));
+  const notesInput = el("input");
+  notesInput.type = "text";
+  notesInput.value = deal.notes || "";
+  notesField.appendChild(notesInput);
+  body.appendChild(notesField);
+
+  const topBtnRow = el("div", "btn-row");
+  const saveDetailsBtn = el("button", "btn btn-secondary", "Save Name/Notes");
+  saveDetailsBtn.addEventListener("click", async () => {
+    await db.updateDeal(deal.id, { name: nameInput.value.trim() || deal.name, notes: notesInput.value.trim() });
+    showToast("Saved");
+    await renderDeals();
+    openDealDetailSheet(await db.getDeal(deal.id));
+  });
+  const statusBtn = el("button", "btn btn-secondary", deal.status === "open" ? "Mark as Settled" : "Reopen Deal");
+  statusBtn.addEventListener("click", async () => {
+    await db.updateDeal(deal.id, { status: deal.status === "open" ? "settled" : "open" });
+    showToast(deal.status === "open" ? "Deal marked as settled" : "Deal reopened");
+    await renderDeals();
+    openDealDetailSheet(await db.getDeal(deal.id));
+  });
+  topBtnRow.appendChild(saveDetailsBtn);
+  topBtnRow.appendChild(statusBtn);
+  body.appendChild(topBtnRow);
+
+  const delBtn = el("button", "btn btn-danger btn-block", "Delete Entire Deal");
+  delBtn.style.marginTop = "8px";
+  delBtn.addEventListener("click", async () => {
+    if (confirm(`Delete "${deal.name}" and everything in it (partners, items, sales, expenses)? This cannot be undone.`)) {
+      await db.deleteDeal(deal.id);
+      closeSheet();
+      showToast("Deal deleted");
+      await renderDeals();
+    }
+  });
+  body.appendChild(delBtn);
+
+  // --- P&L summary ---
+  const pnl = await db.computeDealPnL(deal.id);
+  body.appendChild(el("div", "section-title", "Profit & Loss"));
+  const kpiGrid = el("div", "kpi-grid");
+  [
+    ["Total Invested", money(pnl.totalInvestment)],
+    ["Goods Cost", money(pnl.purchaseCost)],
+    ["Expenses", money(pnl.expensesTotal)],
+    ["Revenue So Far", money(pnl.revenue)],
+    ["Net Profit", money(pnl.netProfit)],
+  ].forEach(([label, value]) => {
+    const card = el("div", "kpi-card");
+    card.appendChild(el("div", "kpi-label", label));
+    const v = el("div", "kpi-value", value);
+    if (label === "Net Profit") v.classList.add(pnl.netProfit >= 0 ? "success" : "danger");
+    card.appendChild(v);
+    kpiGrid.appendChild(card);
+  });
+  body.appendChild(kpiGrid);
+
+  if (pnl.overAllocated) {
+    body.appendChild(el("div", "note-box", "⚠ Custom profit percentages already exceed 100% — remaining partners will get 0%. Adjust the percentages."));
+  }
+
+  // --- Partners ---
+  body.appendChild(el("div", "section-title", "Partners &amp; Profit Split"));
+  const partnersWrap = el("div");
+  if (!pnl.partners.length) {
+    partnersWrap.appendChild(el("div", "empty-state", "No partners added yet."));
+  } else {
+    pnl.partners.forEach((p) => {
+      const row = el("div", "list-row");
+      const main = el("div", "main");
+      const titleWrap = el("div", "title");
+      titleWrap.textContent = p.name + " ";
+      titleWrap.appendChild(el("span", "badge " + (p.paid ? "credit-ok" : "purchase"), p.paid ? "paid" : "unpaid"));
+      main.appendChild(titleWrap);
+      main.appendChild(el("div", "meta",
+        `Invested ${money(p.investment_amount)} · ${p.sharePct.toFixed(1)}%${p.hasCustomPct ? " (fixed)" : ""} share`));
+      row.appendChild(main);
+      const valWrap = el("div");
+      valWrap.style.textAlign = "right";
+      valWrap.appendChild(el("div", "value", money(p.shareAmount)));
+      const payBtn = el("button", "btn btn-secondary", p.paid ? "Mark Unpaid" : "Mark Paid");
+      payBtn.style.marginTop = "4px";
+      payBtn.style.fontSize = "10px";
+      payBtn.style.padding = "4px 8px";
+      payBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        await db.setDealPartnerPaid(p.id, !p.paid);
+        showToast(!p.paid ? "Marked as paid" : "Marked as unpaid");
+        await renderDeals();
+        openDealDetailSheet(await db.getDeal(deal.id));
+      });
+      valWrap.appendChild(payBtn);
+      row.appendChild(valWrap);
+      row.addEventListener("click", () => openDealPartnerSheet(deal, p));
+      partnersWrap.appendChild(row);
+    });
+  }
+  body.appendChild(partnersWrap);
+  const addPartnerBtn = el("button", "btn btn-secondary btn-block", "+ Add Partner");
+  addPartnerBtn.addEventListener("click", () => openDealPartnerSheet(deal, null));
+  body.appendChild(addPartnerBtn);
+
+  // --- Expenses ---
+  body.appendChild(el("div", "section-title", "Deal Expenses"));
+  const expenses = await db.getDealExpenses(deal.id);
+  const expensesWrap = el("div");
+  if (!expenses.length) {
+    expensesWrap.appendChild(el("div", "empty-state", "No expenses logged yet."));
+  } else {
+    expenses.forEach((exp) => {
+      const row = el("div", "list-row");
+      const main = el("div", "main");
+      main.appendChild(el("div", "title", exp.description));
+      main.appendChild(el("div", "meta", exp.date));
+      row.appendChild(main);
+      row.appendChild(el("div", "value", money(exp.amount)));
+      row.addEventListener("click", async () => {
+        if (confirm(`Delete expense "${exp.description}"?`)) {
+          await db.deleteDealExpense(exp.id);
+          showToast("Expense deleted");
+          await renderDeals();
+          openDealDetailSheet(await db.getDeal(deal.id));
+        }
+      });
+      expensesWrap.appendChild(row);
+    });
+  }
+  body.appendChild(expensesWrap);
+  const addExpenseBtn = el("button", "btn btn-secondary btn-block", "+ Add Expense");
+  addExpenseBtn.addEventListener("click", () => openDealExpenseSheet(deal));
+  body.appendChild(addExpenseBtn);
+
+  // --- Items ---
+  body.appendChild(el("div", "section-title", "Deal Items"));
+  const items = await db.getDealItems(deal.id);
+  const itemsWrap = el("div");
+  if (!items.length) {
+    itemsWrap.appendChild(el("div", "empty-state", "No items added yet."));
+  } else {
+    for (const item of items) {
+      const remaining = await db.getItemRemainingQty(item.id);
+      const row = el("div", "list-row");
+      const main = el("div", "main");
+      main.appendChild(el("div", "title", item.name));
+      main.appendChild(el("div", "meta", `Cost ${money(item.purchase_price)}/unit · ${remaining} of ${item.qty_purchased} remaining`));
+      row.appendChild(main);
+      row.appendChild(el("div", "value", money(item.selling_price)));
+      row.addEventListener("click", () => openDealItemSheet(deal, item));
+      itemsWrap.appendChild(row);
+    }
+  }
+  body.appendChild(itemsWrap);
+  const addItemBtn = el("button", "btn btn-secondary btn-block", "+ Add Item");
+  addItemBtn.addEventListener("click", () => openDealItemSheet(deal, null));
+  body.appendChild(addItemBtn);
+
+  if (items.length) {
+    const recordSaleBtn = el("button", "btn btn-primary btn-block", "Record a Sale");
+    recordSaleBtn.style.marginTop = "8px";
+    recordSaleBtn.addEventListener("click", () => openDealSaleSheet(deal));
+    body.appendChild(recordSaleBtn);
+  }
+
+  // --- Recent sales ---
+  const sales = await db.getDealSales(deal.id);
+  if (sales.length) {
+    body.appendChild(el("div", "section-title", "Recent Sales"));
+    const salesWrap = el("div");
+    const itemNameLookup = Object.fromEntries(items.map((i) => [i.id, i.name]));
+    sales.slice(0, 10).forEach((s) => {
+      const row = el("div", "list-row");
+      const main = el("div", "main");
+      main.appendChild(el("div", "title", itemNameLookup[s.deal_item_id] || "Item"));
+      main.appendChild(el("div", "meta", `${s.date} · Qty ${s.quantity}`));
+      row.appendChild(main);
+      row.appendChild(el("div", "value", money(s.total)));
+      row.addEventListener("click", async () => {
+        if (confirm("Delete this sale entry?")) {
+          await db.deleteDealSale(s.id);
+          showToast("Sale deleted");
+          await renderDeals();
+          openDealDetailSheet(await db.getDeal(deal.id));
+        }
+      });
+      salesWrap.appendChild(row);
+    });
+    body.appendChild(salesWrap);
+  }
+
+  openSheet(deal.name, body);
+}
+
+function openDealPartnerSheet(deal, partner) {
+  const isEdit = !!partner;
+  const body = el("div");
+
+  const nameField = el("div", "field");
+  nameField.appendChild(el("label", null, "Partner Name"));
+  const nameInput = el("input");
+  nameInput.type = "text";
+  nameInput.value = isEdit ? partner.name : "";
+  nameField.appendChild(nameInput);
+  body.appendChild(nameField);
+
+  const invField = el("div", "field");
+  invField.appendChild(el("label", null, "Amount Invested"));
+  const invInput = el("input");
+  invInput.type = "number";
+  invInput.step = "0.01";
+  invInput.value = isEdit ? partner.investment_amount : "";
+  invField.appendChild(invInput);
+  body.appendChild(invField);
+
+  const pctField = el("div", "field");
+  pctField.appendChild(el("label", null, "Fixed Profit % (optional)"));
+  const pctInput = el("input");
+  pctInput.type = "number";
+  pctInput.step = "0.1";
+  pctInput.value = isEdit && partner.profit_share_pct !== null && partner.profit_share_pct !== undefined ? partner.profit_share_pct : "";
+  pctField.appendChild(pctInput);
+  pctField.appendChild(el("div", "meta", "Leave blank to split proportionally by investment amount. Set a number to give this partner a fixed % regardless of what they invested (e.g. for extra effort)."));
+  body.appendChild(pctField);
+
+  const notesField = el("div", "field");
+  notesField.appendChild(el("label", null, "Notes (optional)"));
+  const notesInput = el("input");
+  notesInput.type = "text";
+  notesInput.value = isEdit ? partner.notes || "" : "";
+  notesField.appendChild(notesInput);
+  body.appendChild(notesField);
+
+  const btnRow = el("div", "btn-row");
+  const saveBtn = el("button", "btn btn-primary", isEdit ? "Save Changes" : "Add Partner");
+  btnRow.appendChild(saveBtn);
+  if (isEdit) {
+    const delBtn = el("button", "btn btn-danger", "Remove");
+    delBtn.addEventListener("click", async () => {
+      if (confirm(`Remove ${partner.name} from this deal?`)) {
+        await db.deleteDealPartner(partner.id);
+        showToast("Partner removed");
+        await renderDeals();
+        openDealDetailSheet(deal);
+      }
+    });
+    btnRow.appendChild(delBtn);
+  }
+  body.appendChild(btnRow);
+
+  saveBtn.addEventListener("click", async () => {
+    const name = nameInput.value.trim();
+    const investment = parseFloat(invInput.value);
+    if (!name) { showToast("Enter partner name"); return; }
+    if (isNaN(investment) || investment < 0) { showToast("Enter a valid investment amount"); return; }
+    const pctRaw = pctInput.value.trim();
+    const pct = pctRaw === "" ? null : parseFloat(pctRaw);
+
+    if (isEdit) {
+      await db.updateDealPartner(partner.id, {
+        name, investment_amount: investment, profit_share_pct: pct, notes: notesInput.value.trim(),
+      });
+    } else {
+      await db.addDealPartner(deal.id, name, investment, pct, notesInput.value.trim());
+    }
+    closeSheet();
+    showToast(isEdit ? "Partner updated" : "Partner added");
+    await renderDeals();
+    openDealDetailSheet(deal);
+  });
+
+  openSheet(isEdit ? "Edit Partner" : "Add Partner", body);
+}
+
+function openDealExpenseSheet(deal) {
+  const body = el("div");
+
+  const descField = el("div", "field");
+  descField.appendChild(el("label", null, "Description"));
+  const descInput = el("input");
+  descInput.type = "text";
+  descInput.placeholder = "e.g. Transport, Packaging";
+  descField.appendChild(descInput);
+  body.appendChild(descField);
+
+  const row = el("div", "field-row");
+  const amtField = el("div", "field");
+  amtField.appendChild(el("label", null, "Amount"));
+  const amtInput = el("input");
+  amtInput.type = "number";
+  amtInput.step = "0.01";
+  amtField.appendChild(amtInput);
+  row.appendChild(amtField);
+  const dateField = el("div", "field");
+  dateField.appendChild(el("label", null, "Date"));
+  const dateInput = el("input");
+  dateInput.type = "date";
+  dateInput.value = todayStr();
+  dateField.appendChild(dateInput);
+  row.appendChild(dateField);
+  body.appendChild(row);
+
+  const saveBtn = el("button", "btn btn-primary btn-block", "Add Expense");
+  saveBtn.addEventListener("click", async () => {
+    const desc = descInput.value.trim();
+    const amount = parseFloat(amtInput.value);
+    if (!desc) { showToast("Enter a description"); return; }
+    if (isNaN(amount) || amount <= 0) { showToast("Enter a valid amount"); return; }
+    await db.addDealExpense(deal.id, desc, amount, dateInput.value || todayStr());
+    closeSheet();
+    showToast("Expense added");
+    await renderDeals();
+    openDealDetailSheet(deal);
+  });
+  body.appendChild(saveBtn);
+
+  openSheet("Add Deal Expense", body);
+}
+
+function openDealItemSheet(deal, item) {
+  const isEdit = !!item;
+  const body = el("div");
+
+  const nameField = el("div", "field");
+  nameField.appendChild(el("label", null, "Item Name"));
+  const nameInput = el("input");
+  nameInput.type = "text";
+  nameInput.value = isEdit ? item.name : "";
+  nameField.appendChild(nameInput);
+  body.appendChild(nameField);
+
+  const row1 = el("div", "field-row");
+  const costField = el("div", "field");
+  costField.appendChild(el("label", null, "Cost per Unit"));
+  const costInput = el("input");
+  costInput.type = "number";
+  costInput.step = "0.01";
+  costInput.value = isEdit ? item.purchase_price : "";
+  costField.appendChild(costInput);
+  row1.appendChild(costField);
+
+  const priceField = el("div", "field");
+  priceField.appendChild(el("label", null, "Default Selling Price"));
+  const priceInput = el("input");
+  priceInput.type = "number";
+  priceInput.step = "0.01";
+  priceInput.value = isEdit ? item.selling_price : "";
+  priceField.appendChild(priceInput);
+  row1.appendChild(priceField);
+  body.appendChild(row1);
+
+  const qtyField = el("div", "field");
+  qtyField.appendChild(el("label", null, "Quantity Purchased"));
+  const qtyInput = el("input");
+  qtyInput.type = "number";
+  qtyInput.value = isEdit ? item.qty_purchased : "";
+  qtyField.appendChild(qtyInput);
+  body.appendChild(qtyField);
+  if (isEdit) {
+    qtyField.appendChild(el("div", "meta", "Editing this changes the total purchased count — sales already recorded stay as they are."));
+  }
+
+  const btnRow = el("div", "btn-row");
+  const saveBtn = el("button", "btn btn-primary", isEdit ? "Save Changes" : "Add Item");
+  btnRow.appendChild(saveBtn);
+  if (isEdit) {
+    const delBtn = el("button", "btn btn-danger", "Delete");
+    delBtn.addEventListener("click", async () => {
+      if (confirm(`Delete "${item.name}" and all its recorded sales?`)) {
+        await db.deleteDealItem(item.id);
+        showToast("Item deleted");
+        await renderDeals();
+        openDealDetailSheet(deal);
+      }
+    });
+    btnRow.appendChild(delBtn);
+  }
+  body.appendChild(btnRow);
+
+  saveBtn.addEventListener("click", async () => {
+    const name = nameInput.value.trim();
+    const cost = parseFloat(costInput.value);
+    const price = parseFloat(priceInput.value);
+    const qty = parseFloat(qtyInput.value);
+    if (!name) { showToast("Enter item name"); return; }
+    if (isNaN(cost) || isNaN(price) || isNaN(qty)) { showToast("Cost, price, and quantity must be numeric"); return; }
+
+    if (isEdit) {
+      await db.updateDealItem(item.id, { name, purchase_price: cost, selling_price: price, qty_purchased: qty });
+    } else {
+      await db.addDealItem(deal.id, name, cost, price, qty);
+    }
+    closeSheet();
+    showToast(isEdit ? "Item updated" : "Item added");
+    await renderDeals();
+    openDealDetailSheet(deal);
+  });
+
+  openSheet(isEdit ? "Edit Item" : "Add Item", body);
+}
+
+async function openDealSaleSheet(deal) {
+  const items = await db.getDealItems(deal.id);
+  const body = el("div");
+
+  const itemField = el("div", "field");
+  itemField.appendChild(el("label", null, "Item"));
+  const itemSelect = el("select");
+  items.forEach((i) => {
+    const opt = el("option", null, i.name);
+    opt.value = i.id;
+    itemSelect.appendChild(opt);
+  });
+  itemField.appendChild(itemSelect);
+  body.appendChild(itemField);
+
+  const row = el("div", "field-row");
+  const qtyField = el("div", "field");
+  qtyField.appendChild(el("label", null, "Quantity"));
+  const qtyInput = el("input");
+  qtyInput.type = "number";
+  qtyField.appendChild(qtyInput);
+  row.appendChild(qtyField);
+
+  const priceField = el("div", "field");
+  priceField.appendChild(el("label", null, "Unit Price"));
+  const priceInput = el("input");
+  priceInput.type = "number";
+  priceInput.step = "0.01";
+  const setDefaultPrice = () => {
+    const item = items.find((i) => i.id === parseInt(itemSelect.value, 10));
+    if (item) priceInput.value = item.selling_price;
+  };
+  setDefaultPrice();
+  itemSelect.addEventListener("change", setDefaultPrice);
+  priceField.appendChild(priceInput);
+  row.appendChild(priceField);
+  body.appendChild(row);
+
+  const dateField = el("div", "field");
+  dateField.appendChild(el("label", null, "Date"));
+  const dateInput = el("input");
+  dateInput.type = "date";
+  dateInput.value = todayStr();
+  dateField.appendChild(dateInput);
+  body.appendChild(dateField);
+
+  const saveBtn = el("button", "btn btn-primary btn-block", "Record Sale");
+  saveBtn.addEventListener("click", async () => {
+    const itemId = parseInt(itemSelect.value, 10);
+    const qty = parseFloat(qtyInput.value);
+    const price = parseFloat(priceInput.value);
+    if (isNaN(qty) || qty <= 0 || isNaN(price)) { showToast("Enter a valid quantity and price"); return; }
+    const remaining = await db.getItemRemainingQty(itemId);
+    if (qty > remaining) {
+      if (!confirm(`Only ${remaining} left in stock for this item. Record this sale anyway?`)) return;
+    }
+    await db.addDealSale(deal.id, itemId, qty, price, dateInput.value || todayStr());
+    closeSheet();
+    showToast("Sale recorded");
+    await renderDeals();
+    openDealDetailSheet(deal);
+  });
+  body.appendChild(saveBtn);
+
+  openSheet("Record Deal Sale", body);
 }
