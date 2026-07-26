@@ -6,7 +6,7 @@
 */
 
 const DB_NAME = "retail_manager_db";
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 function openDatabase() {
   return new Promise((resolve, reject) => {
@@ -83,15 +83,9 @@ function openDatabase() {
         store.createIndex("deal_id", "deal_id", { unique: false });
       }
 
-      if (!db.objectStoreNames.contains("deal_items")) {
-        const store = db.createObjectStore("deal_items", { keyPath: "id", autoIncrement: true });
-        store.createIndex("deal_id", "deal_id", { unique: false });
-      }
-
       if (!db.objectStoreNames.contains("deal_sales")) {
         const store = db.createObjectStore("deal_sales", { keyPath: "id", autoIncrement: true });
         store.createIndex("deal_id", "deal_id", { unique: false });
-        store.createIndex("deal_item_id", "deal_item_id", { unique: false });
       }
     };
 
@@ -620,10 +614,6 @@ class Database {
     const saleStore = tx(this.idb, "deal_sales", "readwrite").objectStore("deal_sales");
     const sales = await cursorToArray(saleStore, (s) => s.deal_id === id);
     for (const s of sales) await reqToPromise(saleStore.delete(s.id));
-
-    const itemStore = tx(this.idb, "deal_items", "readwrite").objectStore("deal_items");
-    const items = await cursorToArray(itemStore, (i) => i.deal_id === id);
-    for (const i of items) await reqToPromise(itemStore.delete(i.id));
   }
 
   // --- Partners ---
@@ -674,45 +664,14 @@ class Database {
     return all.sort((a, b) => (a.date < b.date ? 1 : -1));
   }
 
-  // --- Items (deal-scoped goods, entirely separate from the main Catalog) ---
-  async addDealItem(deal_id, name, purchase_price, selling_price, qty_purchased, notes = "") {
-    const store = tx(this.idb, "deal_items", "readwrite").objectStore("deal_items");
-    return reqToPromise(store.add({
-      deal_id, name, purchase_price, selling_price, qty_purchased, notes, created_at: this.nowISO(),
-    }));
-  }
-
-  async updateDealItem(id, fields) {
-    const store = tx(this.idb, "deal_items", "readwrite").objectStore("deal_items");
-    const existing = await reqToPromise(store.get(id));
-    if (!existing) return;
-    await reqToPromise(store.put({ ...existing, ...fields }));
-  }
-
-  async deleteDealItem(id) {
-    const itemStore = tx(this.idb, "deal_items", "readwrite").objectStore("deal_items");
-    await reqToPromise(itemStore.delete(id));
-    const saleStore = tx(this.idb, "deal_sales", "readwrite").objectStore("deal_sales");
-    const sales = await cursorToArray(saleStore, (s) => s.deal_item_id === id);
-    for (const s of sales) await reqToPromise(saleStore.delete(s.id));
-  }
-
-  async getDealItems(deal_id) {
-    const store = tx(this.idb, "deal_items").objectStore("deal_items");
-    const all = await cursorToArray(store, (i) => i.deal_id === deal_id);
-    return all.sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
-  }
-
-  async getDealItem(id) {
-    const store = tx(this.idb, "deal_items").objectStore("deal_items");
-    return reqToPromise(store.get(id));
-  }
-
-  // --- Sales (deal-scoped, entirely separate from the main Transactions ledger) ---
-  async addDealSale(deal_id, deal_item_id, quantity, unit_price, date, notes = "") {
+  // --- Sales (deal-scoped, entirely separate from the main Transactions
+  // ledger). A deal is one bulk lot, not a catalog of separate items —
+  // each sale is just a revenue entry, whether it's a partial or full
+  // sale of the lot. Cost basis for profit is the partners' pooled
+  // investment (that's literally what funded buying the lot).
+  async addDealSale(deal_id, amount, date, description = "", notes = "") {
     const store = tx(this.idb, "deal_sales", "readwrite").objectStore("deal_sales");
-    const total = quantity * unit_price;
-    await reqToPromise(store.add({ deal_id, deal_item_id, quantity, unit_price, total, date, notes }));
+    await reqToPromise(store.add({ deal_id, amount, date, description, notes }));
   }
 
   async deleteDealSale(id) {
@@ -726,17 +685,11 @@ class Database {
     return all.sort((a, b) => (a.date < b.date ? 1 : -1));
   }
 
-  async getItemRemainingQty(deal_item_id) {
-    const item = await this.getDealItem(deal_item_id);
-    if (!item) return 0;
-    const store = tx(this.idb, "deal_sales").objectStore("deal_sales");
-    const sales = await cursorToArray(store, (s) => s.deal_item_id === deal_item_id);
-    const sold = sales.reduce((sum, s) => sum + s.quantity, 0);
-    return item.qty_purchased - sold;
-  }
-
   /**
    * Full profit & loss + partner payout breakdown for a deal.
+   * Cost basis = total partner investment (the pooled money that bought
+   * the lot) + deal expenses. Revenue = sum of all recorded sales
+   * (partial or full sell-offs of the lot).
    * Profit split: partners with an explicit profit_share_pct get exactly
    * that percentage; the remaining percentage (100% minus whatever's
    * explicitly allocated) is split among the rest proportional to their
@@ -746,22 +699,13 @@ class Database {
   async computeDealPnL(deal_id) {
     const partners = await this.getDealPartners(deal_id);
     const expenses = await this.getDealExpenses(deal_id);
-    const items = await this.getDealItems(deal_id);
     const sales = await this.getDealSales(deal_id);
 
     const totalInvestment = partners.reduce((s, p) => s + p.investment_amount, 0);
     const expensesTotal = expenses.reduce((s, e) => s + e.amount, 0);
-    const purchaseCost = items.reduce((s, i) => s + i.purchase_price * i.qty_purchased, 0);
+    const revenue = sales.reduce((s, sale) => s + sale.amount, 0);
 
-    const costLookup = Object.fromEntries(items.map((i) => [i.id, i.purchase_price]));
-    let revenue = 0;
-    let cogs = 0;
-    for (const s of sales) {
-      revenue += s.total;
-      cogs += (costLookup[s.deal_item_id] || 0) * s.quantity;
-    }
-
-    const netProfit = revenue - cogs - expensesTotal;
+    const netProfit = revenue - totalInvestment - expensesTotal;
 
     const customPartners = partners.filter((p) => p.profit_share_pct !== null && p.profit_share_pct !== undefined);
     const autoPartners = partners.filter((p) => p.profit_share_pct === null || p.profit_share_pct === undefined);
@@ -785,7 +729,7 @@ class Database {
     });
 
     return {
-      totalInvestment, purchaseCost, expensesTotal, revenue, cogs, netProfit,
+      totalInvestment, expensesTotal, revenue, netProfit,
       partners: partnersWithShares, overAllocated,
     };
   }
@@ -885,7 +829,7 @@ class Database {
   async exportAll() {
     const storeNames = ["categories", "products", "price_history", "transactions", "expenses",
                          "settings", "customers", "credit_entries", "other_credits", "other_credit_entries",
-                         "deals", "deal_partners", "deal_expenses", "deal_items", "deal_sales"];
+                         "deals", "deal_partners", "deal_expenses", "deal_sales"];
     const data = {};
     for (const name of storeNames) {
       const store = tx(this.idb, name).objectStore(name);
@@ -897,7 +841,7 @@ class Database {
   async importAll(data) {
     const storeNames = ["categories", "products", "price_history", "transactions", "expenses",
                          "settings", "customers", "credit_entries", "other_credits", "other_credit_entries",
-                         "deals", "deal_partners", "deal_expenses", "deal_items", "deal_sales"];
+                         "deals", "deal_partners", "deal_expenses", "deal_sales"];
     for (const name of storeNames) {
       if (!data[name]) continue;
       const store = tx(this.idb, name, "readwrite").objectStore(name);

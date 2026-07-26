@@ -1896,6 +1896,16 @@ function openNewDealSheet() {
   nameField.appendChild(nameInput);
   body.appendChild(nameField);
 
+  const investField = el("div", "field");
+  investField.appendChild(el("label", null, "Your Initial Investment"));
+  const investInput = el("input");
+  investInput.type = "number";
+  investInput.step = "0.01";
+  investInput.placeholder = "0";
+  investField.appendChild(investInput);
+  investField.appendChild(el("div", "meta", "This adds you as the first partner. Other partners' investments get added on top when you add them below."));
+  body.appendChild(investField);
+
   const notesField = el("div", "field");
   notesField.appendChild(el("label", null, "Notes (optional)"));
   const notesInput = el("input");
@@ -1908,7 +1918,11 @@ function openNewDealSheet() {
     const name = nameInput.value.trim();
     if (!name) { showToast("Enter a deal name"); return; }
     const id = await db.addDeal(name, notesInput.value.trim());
-    showToast("Deal created — now add partners and items");
+    const initialInvestment = parseFloat(investInput.value);
+    if (!isNaN(initialInvestment) && initialInvestment > 0) {
+      await db.addDealPartner(id, "You", initialInvestment, null);
+    }
+    showToast("Deal created");
     await renderDeals();
     const deal = await db.getDeal(id);
     openDealDetailSheet(deal);
@@ -1975,8 +1989,7 @@ async function openDealDetailSheet(deal) {
   body.appendChild(el("div", "section-title", "Profit & Loss"));
   const kpiGrid = el("div", "kpi-grid");
   [
-    ["Total Invested", money(pnl.totalInvestment)],
-    ["Goods Cost", money(pnl.purchaseCost)],
+    ["Deal Total Amount", money(pnl.totalInvestment)],
     ["Expenses", money(pnl.expensesTotal)],
     ["Revenue So Far", money(pnl.revenue)],
     ["Net Profit", money(pnl.netProfit)],
@@ -2065,50 +2078,26 @@ async function openDealDetailSheet(deal) {
   addExpenseBtn.addEventListener("click", () => openDealExpenseSheet(deal));
   body.appendChild(addExpenseBtn);
 
-  // --- Items ---
-  body.appendChild(el("div", "section-title", "Deal Items"));
-  const items = await db.getDealItems(deal.id);
-  const itemsWrap = el("div");
-  if (!items.length) {
-    itemsWrap.appendChild(el("div", "empty-state", "No items added yet."));
-  } else {
-    for (const item of items) {
-      const remaining = await db.getItemRemainingQty(item.id);
-      const row = el("div", "list-row");
-      const main = el("div", "main");
-      main.appendChild(el("div", "title", item.name));
-      main.appendChild(el("div", "meta", `Cost ${money(item.purchase_price)}/unit · ${remaining} of ${item.qty_purchased} remaining`));
-      row.appendChild(main);
-      row.appendChild(el("div", "value", money(item.selling_price)));
-      row.addEventListener("click", () => openDealItemSheet(deal, item));
-      itemsWrap.appendChild(row);
-    }
-  }
-  body.appendChild(itemsWrap);
-  const addItemBtn = el("button", "btn btn-secondary btn-block", "+ Add Item");
-  addItemBtn.addEventListener("click", () => openDealItemSheet(deal, null));
-  body.appendChild(addItemBtn);
-
-  if (items.length) {
-    const recordSaleBtn = el("button", "btn btn-primary btn-block", "Record a Sale");
-    recordSaleBtn.style.marginTop = "8px";
-    recordSaleBtn.addEventListener("click", () => openDealSaleSheet(deal));
-    body.appendChild(recordSaleBtn);
-  }
+  // --- Record Sale (deal is one bulk lot — no separate item catalog needed) ---
+  const recordSaleBtn = el("button", "btn btn-primary btn-block", "Record a Sale");
+  recordSaleBtn.style.marginTop = "8px";
+  recordSaleBtn.addEventListener("click", () => openDealSaleSheet(deal));
+  body.appendChild(recordSaleBtn);
 
   // --- Recent sales ---
   const sales = await db.getDealSales(deal.id);
-  if (sales.length) {
-    body.appendChild(el("div", "section-title", "Recent Sales"));
-    const salesWrap = el("div");
-    const itemNameLookup = Object.fromEntries(items.map((i) => [i.id, i.name]));
-    sales.slice(0, 10).forEach((s) => {
+  body.appendChild(el("div", "section-title", "Sales Recorded"));
+  const salesWrap = el("div");
+  if (!sales.length) {
+    salesWrap.appendChild(el("div", "empty-state", "No sales recorded yet — could be a partial or full sell-off of the lot."));
+  } else {
+    sales.forEach((s) => {
       const row = el("div", "list-row");
       const main = el("div", "main");
-      main.appendChild(el("div", "title", itemNameLookup[s.deal_item_id] || "Item"));
-      main.appendChild(el("div", "meta", `${s.date} · Qty ${s.quantity}`));
+      main.appendChild(el("div", "title", s.description || "Sale"));
+      main.appendChild(el("div", "meta", s.date));
       row.appendChild(main);
-      row.appendChild(el("div", "value", money(s.total)));
+      row.appendChild(el("div", "value", money(s.amount)));
       row.addEventListener("click", async () => {
         if (confirm("Delete this sale entry?")) {
           await db.deleteDealSale(s.id);
@@ -2119,8 +2108,8 @@ async function openDealDetailSheet(deal) {
       });
       salesWrap.appendChild(row);
     });
-    body.appendChild(salesWrap);
   }
+  body.appendChild(salesWrap);
 
   openSheet(deal.name, body);
 }
@@ -2250,125 +2239,17 @@ function openDealExpenseSheet(deal) {
   openSheet("Add Deal Expense", body);
 }
 
-function openDealItemSheet(deal, item) {
-  const isEdit = !!item;
+function openDealSaleSheet(deal) {
   const body = el("div");
 
-  const nameField = el("div", "field");
-  nameField.appendChild(el("label", null, "Item Name"));
-  const nameInput = el("input");
-  nameInput.type = "text";
-  nameInput.value = isEdit ? item.name : "";
-  nameField.appendChild(nameInput);
-  body.appendChild(nameField);
-
-  const row1 = el("div", "field-row");
-  const costField = el("div", "field");
-  costField.appendChild(el("label", null, "Cost per Unit"));
-  const costInput = el("input");
-  costInput.type = "number";
-  costInput.step = "0.01";
-  costInput.value = isEdit ? item.purchase_price : "";
-  costField.appendChild(costInput);
-  row1.appendChild(costField);
-
-  const priceField = el("div", "field");
-  priceField.appendChild(el("label", null, "Default Selling Price"));
-  const priceInput = el("input");
-  priceInput.type = "number";
-  priceInput.step = "0.01";
-  priceInput.value = isEdit ? item.selling_price : "";
-  priceField.appendChild(priceInput);
-  row1.appendChild(priceField);
-  body.appendChild(row1);
-
-  const qtyField = el("div", "field");
-  qtyField.appendChild(el("label", null, "Quantity Purchased"));
-  const qtyInput = el("input");
-  qtyInput.type = "number";
-  qtyInput.value = isEdit ? item.qty_purchased : "";
-  qtyField.appendChild(qtyInput);
-  body.appendChild(qtyField);
-  if (isEdit) {
-    qtyField.appendChild(el("div", "meta", "Editing this changes the total purchased count — sales already recorded stay as they are."));
-  }
-
-  const btnRow = el("div", "btn-row");
-  const saveBtn = el("button", "btn btn-primary", isEdit ? "Save Changes" : "Add Item");
-  btnRow.appendChild(saveBtn);
-  if (isEdit) {
-    const delBtn = el("button", "btn btn-danger", "Delete");
-    delBtn.addEventListener("click", async () => {
-      if (confirm(`Delete "${item.name}" and all its recorded sales?`)) {
-        await db.deleteDealItem(item.id);
-        showToast("Item deleted");
-        await renderDeals();
-        openDealDetailSheet(deal);
-      }
-    });
-    btnRow.appendChild(delBtn);
-  }
-  body.appendChild(btnRow);
-
-  saveBtn.addEventListener("click", async () => {
-    const name = nameInput.value.trim();
-    const cost = parseFloat(costInput.value);
-    const price = parseFloat(priceInput.value);
-    const qty = parseFloat(qtyInput.value);
-    if (!name) { showToast("Enter item name"); return; }
-    if (isNaN(cost) || isNaN(price) || isNaN(qty)) { showToast("Cost, price, and quantity must be numeric"); return; }
-
-    if (isEdit) {
-      await db.updateDealItem(item.id, { name, purchase_price: cost, selling_price: price, qty_purchased: qty });
-    } else {
-      await db.addDealItem(deal.id, name, cost, price, qty);
-    }
-    closeSheet();
-    showToast(isEdit ? "Item updated" : "Item added");
-    await renderDeals();
-    openDealDetailSheet(deal);
-  });
-
-  openSheet(isEdit ? "Edit Item" : "Add Item", body);
-}
-
-async function openDealSaleSheet(deal) {
-  const items = await db.getDealItems(deal.id);
-  const body = el("div");
-
-  const itemField = el("div", "field");
-  itemField.appendChild(el("label", null, "Item"));
-  const itemSelect = el("select");
-  items.forEach((i) => {
-    const opt = el("option", null, i.name);
-    opt.value = i.id;
-    itemSelect.appendChild(opt);
-  });
-  itemField.appendChild(itemSelect);
-  body.appendChild(itemField);
-
-  const row = el("div", "field-row");
-  const qtyField = el("div", "field");
-  qtyField.appendChild(el("label", null, "Quantity"));
-  const qtyInput = el("input");
-  qtyInput.type = "number";
-  qtyField.appendChild(qtyInput);
-  row.appendChild(qtyField);
-
-  const priceField = el("div", "field");
-  priceField.appendChild(el("label", null, "Unit Price"));
-  const priceInput = el("input");
-  priceInput.type = "number";
-  priceInput.step = "0.01";
-  const setDefaultPrice = () => {
-    const item = items.find((i) => i.id === parseInt(itemSelect.value, 10));
-    if (item) priceInput.value = item.selling_price;
-  };
-  setDefaultPrice();
-  itemSelect.addEventListener("change", setDefaultPrice);
-  priceField.appendChild(priceInput);
-  row.appendChild(priceField);
-  body.appendChild(row);
+  const amtField = el("div", "field");
+  amtField.appendChild(el("label", null, "Sale Amount"));
+  const amtInput = el("input");
+  amtInput.type = "number";
+  amtInput.step = "0.01";
+  amtField.appendChild(amtInput);
+  amtField.appendChild(el("div", "meta", "Could be the full lot or just part of it — record as many sale entries as you need."));
+  body.appendChild(amtField);
 
   const dateField = el("div", "field");
   dateField.appendChild(el("label", null, "Date"));
@@ -2378,17 +2259,19 @@ async function openDealSaleSheet(deal) {
   dateField.appendChild(dateInput);
   body.appendChild(dateField);
 
+  const descField = el("div", "field");
+  descField.appendChild(el("label", null, "Description (optional)"));
+  const descInput = el("input");
+  descInput.type = "text";
+  descInput.placeholder = "e.g. Sold 20 boxes to XYZ Store";
+  descField.appendChild(descInput);
+  body.appendChild(descField);
+
   const saveBtn = el("button", "btn btn-primary btn-block", "Record Sale");
   saveBtn.addEventListener("click", async () => {
-    const itemId = parseInt(itemSelect.value, 10);
-    const qty = parseFloat(qtyInput.value);
-    const price = parseFloat(priceInput.value);
-    if (isNaN(qty) || qty <= 0 || isNaN(price)) { showToast("Enter a valid quantity and price"); return; }
-    const remaining = await db.getItemRemainingQty(itemId);
-    if (qty > remaining) {
-      if (!confirm(`Only ${remaining} left in stock for this item. Record this sale anyway?`)) return;
-    }
-    await db.addDealSale(deal.id, itemId, qty, price, dateInput.value || todayStr());
+    const amount = parseFloat(amtInput.value);
+    if (isNaN(amount) || amount <= 0) { showToast("Enter a valid sale amount"); return; }
+    await db.addDealSale(deal.id, amount, dateInput.value || todayStr(), descInput.value.trim());
     closeSheet();
     showToast("Sale recorded");
     await renderDeals();
@@ -2396,5 +2279,5 @@ async function openDealSaleSheet(deal) {
   });
   body.appendChild(saveBtn);
 
-  openSheet("Record Deal Sale", body);
+  openSheet("Record Sale", body);
 }
