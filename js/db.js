@@ -527,6 +527,11 @@ class Database {
     await reqToPromise(store.add({ other_credit_id, entry_type: entryType, amount, date, notes }));
   }
 
+  async addOtherCreditCharge(other_credit_id, amount, date = null, notes = "") {
+    date = date || new Date().toISOString().slice(0, 10);
+    await this._addOtherCreditEntry(other_credit_id, "charge", amount, date, notes || "Additional credit");
+  }
+
   async addOtherCreditPayment(other_credit_id, amount, date = null, notes = "") {
     date = date || new Date().toISOString().slice(0, 10);
     await this._addOtherCreditEntry(other_credit_id, "payment", amount, date, notes || "Repayment");

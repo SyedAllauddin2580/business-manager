@@ -1015,7 +1015,7 @@ async function openLoanLedgerSheet(loan) {
   editBtn.addEventListener("click", () => openLoanSheet(loan));
   body.appendChild(editBtn);
 
-  body.appendChild(el("div", "section-title", isTaken ? "Record a Repayment (to them)" : "Record a Repayment (from them)"));
+  body.appendChild(el("div", "section-title", "Add Credit or Record Repayment"));
   const row = el("div", "field-row");
   const amtField = el("div", "field");
   amtField.appendChild(el("label", null, "Amount"));
@@ -1040,7 +1040,27 @@ async function openLoanLedgerSheet(loan) {
   notesField.appendChild(notesInput);
   body.appendChild(notesField);
 
-  const payBtn = el("button", "btn btn-primary btn-block", "Record Repayment");
+  const btnRow = el("div", "btn-row");
+  const addCreditBtn = el("button", "btn btn-secondary", "Add Credit");
+  const payBtn = el("button", "btn btn-primary", "Record Repayment");
+  btnRow.appendChild(addCreditBtn);
+  btnRow.appendChild(payBtn);
+  body.appendChild(btnRow);
+  body.appendChild(el("div", "meta",
+    isTaken
+      ? "Add Credit = borrowing more from them (increases what you owe). Record Repayment = paying them back."
+      : "Add Credit = lending them more (increases what they owe you). Record Repayment = them paying you back."
+  ));
+
+  addCreditBtn.addEventListener("click", async () => {
+    const amount = parseFloat(amtInput.value);
+    if (isNaN(amount) || amount <= 0) { showToast("Enter a valid amount"); return; }
+    await db.addOtherCreditCharge(loan.id, amount, dateInput.value || todayStr(), notesInput.value.trim());
+    closeSheet();
+    showToast("Credit added");
+    await renderLoans();
+  });
+
   payBtn.addEventListener("click", async () => {
     const amount = parseFloat(amtInput.value);
     if (isNaN(amount) || amount <= 0) { showToast("Enter a valid amount"); return; }
@@ -1049,7 +1069,6 @@ async function openLoanLedgerSheet(loan) {
     showToast("Repayment recorded");
     await renderLoans();
   });
-  body.appendChild(payBtn);
 
   body.appendChild(el("div", "section-title", "Ledger History"));
   const ledger = await db.getOtherCreditLedger(loan.id);
