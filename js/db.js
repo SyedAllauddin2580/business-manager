@@ -89,7 +89,25 @@ function openDatabase() {
       }
     };
 
-    request.onsuccess = (event) => resolve(event.target.result);
+    // Another window/tab (e.g. the installed app still sitting in recent apps)
+    // is holding an OLDER version of the database open, which blocks this
+    // upgrade. That window will be told to close its connection below; until
+    // it does, tell the user what's going on instead of hanging silently.
+    request.onblocked = () => {
+      if (typeof window.__showDbBlockedNotice === "function") window.__showDbBlockedNotice();
+    };
+
+    request.onsuccess = (event) => {
+      const idb = event.target.result;
+      // If a newer version of the app later needs to upgrade the database,
+      // release our connection right away (instead of blocking it forever)
+      // and reload so this window picks up the new version too.
+      idb.onversionchange = () => {
+        idb.close();
+        window.location.reload();
+      };
+      resolve(idb);
+    };
     request.onerror = (event) => reject(event.target.error);
   });
 }
@@ -258,10 +276,17 @@ class Database {
     return { cost_value, retail_value };
   }
 
+  async getOutOfStockProducts() {
+    const products = await this.getProducts();
+    return products
+      .filter((p) => p.stock_qty <= 0)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   async getLowStockProducts() {
     const products = await this.getProducts();
     return products
-      .filter((p) => p.reorder_level > 0 && p.stock_qty <= p.reorder_level)
+      .filter((p) => p.reorder_level > 0 && p.stock_qty > 0 && p.stock_qty <= p.reorder_level)
       .sort((a, b) => a.stock_qty - b.stock_qty);
   }
 

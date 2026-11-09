@@ -23,10 +23,65 @@ let state = {
 // ------------------------------------------------------------------
 // Bootstrapping
 // ------------------------------------------------------------------
+/** Small persistent banner at the top of the screen, optionally with a button. */
+function showBanner(id, message, buttonLabel, onButton) {
+  let banner = document.getElementById(id);
+  if (!banner) {
+    banner = document.createElement("div");
+    banner.id = id;
+    banner.style.cssText =
+      "position:fixed;top:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;" +
+      "z-index:100;background:#B4453A;color:#fff;padding:10px 14px;font-size:13px;line-height:1.4;" +
+      "display:flex;gap:10px;align-items:center;justify-content:space-between;";
+    if (id === "update-banner") banner.style.background = "#1C3D3A";
+    document.body.appendChild(banner);
+  }
+  banner.innerHTML = "";
+  const text = document.createElement("span");
+  text.textContent = message;
+  banner.appendChild(text);
+  if (buttonLabel) {
+    const btn = document.createElement("button");
+    btn.textContent = buttonLabel;
+    btn.style.cssText = "flex:0 0 auto;border:1px solid #fff;background:transparent;color:#fff;padding:6px 10px;border-radius:6px;font-weight:600;";
+    btn.addEventListener("click", onButton);
+    banner.appendChild(btn);
+  }
+}
+
+// Shown by db.js if a database upgrade is waiting on another open window.
+window.__showDbBlockedNotice = () =>
+  showBanner(
+    "db-blocked-banner",
+    "Update waiting: another Retail Manager window is still open. Close it (swipe the app away from recent apps), then reopen.",
+    "Retry",
+    () => window.location.reload()
+  );
+
 window.addEventListener("DOMContentLoaded", async () => {
-  db = await Database.create();
+  // If the database hasn't opened after a few seconds, don't leave the user
+  // with a silently dead app — tell them what to do.
+  const dbSlowTimer = setTimeout(() => window.__showDbBlockedNotice(), 4000);
+  try {
+    db = await Database.create();
+  } catch (err) {
+    showBanner("db-error-banner", "Couldn't open the app's storage: " + (err && err.message ? err.message : err), "Retry", () => window.location.reload());
+    return;
+  }
+  clearTimeout(dbSlowTimer);
+  const blockedBanner = document.getElementById("db-blocked-banner");
+  if (blockedBanner) blockedBanner.remove();
 
   if ("serviceWorker" in navigator) {
+    // The app caches its own files for offline use, which means after a
+    // new version is published, the *first* open can still show the old
+    // version. When the new one finishes installing, offer a one-tap reload.
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (hadController) {
+        showBanner("update-banner", "A new version of Retail Manager is ready.", "Reload", () => window.location.reload());
+      }
+    });
     navigator.serviceWorker.register("service-worker.js").catch(() => {});
   }
 
@@ -193,6 +248,7 @@ async function renderDashboard() {
   const avgTxn = saleTxns.length ? saleTxns.reduce((s, t) => s + t.total, 0) / saleTxns.length : 0;
 
   const lowStock = await db.getLowStockProducts();
+  const outOfStock = await db.getOutOfStockProducts();
   const inv = await db.inventoryValue();
   const productCount = await db.countProducts();
   const totalDues = await db.getTotalOutstandingDues();
@@ -203,6 +259,7 @@ async function renderDashboard() {
     ["Period Net Profit", money(netProfit)],
     ["Avg. Sale Value", money(avgTxn)],
     ["Total Products", String(productCount)],
+    ["Out of Stock", String(outOfStock.length)],
     ["Low Stock Alerts", String(lowStock.length)],
     ["Inventory (cost)", money(inv.cost_value)],
     ["Inventory (retail)", money(inv.retail_value)],
@@ -213,7 +270,9 @@ async function renderDashboard() {
   kpis.forEach(([label, value]) => {
     const card = el("div", "kpi-card");
     card.appendChild(el("div", "kpi-label", label));
-    card.appendChild(el("div", "kpi-value", value));
+    const v = el("div", "kpi-value", value);
+    if (label === "Out of Stock" && outOfStock.length > 0) v.classList.add("danger");
+    card.appendChild(v);
     kpiGrid.appendChild(card);
   });
 
@@ -240,6 +299,26 @@ async function renderDashboard() {
     { valueFmt: (v) => v.toFixed(0) }
   );
 
+  const outOfStockList = document.getElementById("out-of-stock-list");
+  outOfStockList.innerHTML = "";
+  if (!outOfStock.length) {
+    outOfStockList.appendChild(el("div", "empty-state", "Nothing out of stock right now."));
+  } else {
+    outOfStock.forEach((p) => {
+      const row = el("div", "list-row");
+      const main = el("div", "main");
+      const titleWrap = el("div", "title");
+      titleWrap.textContent = p.name + " ";
+      titleWrap.appendChild(el("span", "badge overdue", "out of stock"));
+      main.appendChild(titleWrap);
+      main.appendChild(el("div", "meta", `${p.category_name || "Uncategorized"}`));
+      row.appendChild(main);
+      row.appendChild(el("div", "value danger", "0 left"));
+      row.addEventListener("click", () => openProductSheet(p));
+      outOfStockList.appendChild(row);
+    });
+  }
+
   const lowStockList = document.getElementById("low-stock-list");
   lowStockList.innerHTML = "";
   if (!lowStock.length) {
@@ -248,10 +327,14 @@ async function renderDashboard() {
     lowStock.forEach((p) => {
       const row = el("div", "list-row");
       const main = el("div", "main");
-      main.appendChild(el("div", "title", p.name));
+      const titleWrap = el("div", "title");
+      titleWrap.textContent = p.name + " ";
+      titleWrap.appendChild(el("span", "badge purchase", "low stock"));
+      main.appendChild(titleWrap);
       main.appendChild(el("div", "meta", `Reorder level: ${p.reorder_level}`));
       row.appendChild(main);
       row.appendChild(el("div", "value", `${p.stock_qty} left`));
+      row.addEventListener("click", () => openProductSheet(p));
       lowStockList.appendChild(row);
     });
   }
@@ -306,7 +389,14 @@ async function renderCatalog() {
   products.forEach((p) => {
     const row = el("div", "list-row");
     const main = el("div", "main");
-    main.appendChild(el("div", "title", p.name));
+    const titleWrap = el("div", "title");
+    titleWrap.textContent = p.name + " ";
+    if (p.stock_qty <= 0) {
+      titleWrap.appendChild(el("span", "badge overdue", "out of stock"));
+    } else if (p.reorder_level > 0 && p.stock_qty <= p.reorder_level) {
+      titleWrap.appendChild(el("span", "badge purchase", "low stock"));
+    }
+    main.appendChild(titleWrap);
     main.appendChild(
       el("div", "meta", `${p.category_name || "Uncategorized"} · Stock: ${p.stock_qty} ${p.unit}`)
     );
@@ -315,10 +405,75 @@ async function renderCatalog() {
     valWrap.style.textAlign = "right";
     valWrap.appendChild(el("div", "value", money(p.selling_price)));
     valWrap.appendChild(el("div", "value small", `cost ${money(p.purchase_price)}`));
+    const restockBtn = el("button", "btn btn-secondary", "Restock");
+    restockBtn.style.marginTop = "4px";
+    restockBtn.style.fontSize = "10px";
+    restockBtn.style.padding = "4px 10px";
+    restockBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openRestockSheet(p);
+    });
+    valWrap.appendChild(restockBtn);
     row.appendChild(valWrap);
     row.addEventListener("click", () => openProductSheet(p));
     list.appendChild(row);
   });
+}
+
+function openRestockSheet(product) {
+  const body = el("div");
+  body.appendChild(el("div", "note-box", `Restocking ${product.name}. Current stock: ${product.stock_qty} ${product.unit}.`));
+
+  const row = el("div", "field-row");
+  const qtyField = el("div", "field");
+  qtyField.appendChild(el("label", null, "Quantity to Add"));
+  const qtyInput = el("input");
+  qtyInput.type = "number";
+  qtyField.appendChild(qtyInput);
+  row.appendChild(qtyField);
+
+  const costField = el("div", "field");
+  costField.appendChild(el("label", null, "Cost per Unit"));
+  const costInput = el("input");
+  costInput.type = "number";
+  costInput.step = "0.01";
+  costInput.value = product.purchase_price;
+  costField.appendChild(costInput);
+  row.appendChild(costField);
+  body.appendChild(row);
+
+  const dateField = el("div", "field");
+  dateField.appendChild(el("label", null, "Date"));
+  const dateInput = el("input");
+  dateInput.type = "date";
+  dateInput.value = todayStr();
+  dateField.appendChild(dateInput);
+  body.appendChild(dateField);
+
+  const notesField = el("div", "field");
+  notesField.appendChild(el("label", null, "Notes (optional)"));
+  const notesInput = el("input");
+  notesInput.type = "text";
+  notesField.appendChild(notesInput);
+  body.appendChild(notesField);
+
+  const saveBtn = el("button", "btn btn-primary btn-block", "Add Stock");
+  saveBtn.addEventListener("click", async () => {
+    const qty = parseFloat(qtyInput.value);
+    const cost = parseFloat(costInput.value);
+    if (isNaN(qty) || qty <= 0) { showToast("Enter a valid quantity"); return; }
+    if (isNaN(cost) || cost < 0) { showToast("Enter a valid cost"); return; }
+    await db.addTransaction(product.id, "purchase", qty, cost, dateInput.value || todayStr(), notesInput.value.trim());
+    closeSheet();
+    showToast(`Restocked ${qty} ${product.unit} of ${product.name}`);
+    await renderCatalog();
+    await renderTransactions();
+    await renderDashboard();
+    await renderPricing();
+  });
+  body.appendChild(saveBtn);
+
+  openSheet(`Restock: ${product.name}`, body);
 }
 
 async function populateCategorySelect(selectEl, selectedId) {

@@ -82,7 +82,8 @@ html, body {
 .tab-panel {
   flex: 1 1 auto;
   overflow-y: auto;
-  padding: 14px 14px calc(var(--tabbar-h) + 24px) 14px;
+  /* extra bottom room so the last row can scroll clear of the floating + button */
+  padding: 14px 14px calc(var(--tabbar-h) + 96px) 14px;
   display: none;
 }
 .tab-panel.active { display: block; }
@@ -314,8 +315,9 @@ html, body {
 .fab {
   position: fixed;
   bottom: calc(var(--tabbar-h) + 16px);
-  left: 50%;
-  transform: translateX(calc(-50% + 190px));
+  /* Anchor to the right edge of the app column (max 480px wide, centred),
+     with a 14px gutter — works on any phone width without clipping. */
+  right: max(14px, calc(50vw - 240px + 14px));
   width: 52px;
   height: 52px;
   border-radius: 50%;
